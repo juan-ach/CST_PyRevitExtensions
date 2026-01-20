@@ -4,7 +4,6 @@ __title__ = "Delete SERV Labels"
 __author__ = "Juan Achenbach"
 __version__ = 'Version: 1.0'
 __doc__ = """Version: 1.0
-Date    = 10.12.2025
 _____________________________________________________________________
 Description:
 
@@ -14,8 +13,7 @@ How-to:
 
 Just run the script to erase all Mechanical Equipement tags
 _____________________________________________________________________
-Last update: 10.12.2025
-_____________________________________________________________________
+
 Author: Juan Manuel Achenbach Anguita & ChatGPT"""
 
 

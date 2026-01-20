@@ -4,8 +4,7 @@ __title__ = "Create TUB Labels"
 __author__ = "Juan Achenbach"
 __version__ = 'Version: 1.0'
 __doc__ = """Version: 1.0
-Date    = 15.12.2025
-_____________________________________________________________________
+
 Description:
 
 Create Tags for all Services & Pipe Diameter
@@ -16,8 +15,6 @@ How-to:
 1.- Pin al elements with Pin tool
 2.- Run this script
 3.- Click on "Select pinned elements" to only select created tag and place them correctly
-_____________________________________________________________________
-Last update: 15.12.2025
 _____________________________________________________________________
 Author: Juan Manuel Achenbach Anguita & ChatGPT"""
 

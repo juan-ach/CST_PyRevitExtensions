@@ -4,7 +4,6 @@ __title__ = "Turn Off/Grey Layers"
 __author__ = "Juan Achenbach"
 __version__ = 'Version: 1.0'
 __doc__ = """Version: 1.0
-Date    = 10.12.2025
 _____________________________________________________________________
 Description:
 

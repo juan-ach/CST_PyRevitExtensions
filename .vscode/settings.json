@@ -1,0 +1,10 @@
+{
+  "cline.mcpServers": {
+    "revit-mcp": {
+      "command": "node",
+      "args": [
+        "C:\\Users\\USUARIO-1\\Desktop\\JUAN\\mcp integration\\revit-mcp\\build\\index.js"
+      ]
+    }
+  }
+}

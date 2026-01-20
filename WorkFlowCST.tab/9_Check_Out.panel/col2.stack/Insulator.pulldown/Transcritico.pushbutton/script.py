@@ -1,5 +1,22 @@
 # -*- coding: utf-8 -*-
 
+from __future__ import print_function, division
+
+import clr
+clr.AddReference("RevitAPI")
+clr.AddReference("System.Windows.Forms")
+clr.AddReference("System.Drawing")
+
+from pyrevit import revit, DB
+from Autodesk.Revit.DB.Plumbing import PipeInsulation
+
+import System
+from System.Windows.Forms import Form, Label, Timer
+import System.Windows.Forms
+import System.Drawing
+
+doc = revit.doc
+
 __title__ = "Transcrítico" 
 __author__ = "Juan Achenbach"
 __version__ = 'Version: 1.0'
@@ -18,7 +35,6 @@ _____________________________________________________________________
 
 Author: Juan Manuel Achenbach Anguita & ChatGPT"""
 
-from __future__ import print_function, division
 
 import clr
 clr.AddReference("RevitAPI")
@@ -65,8 +81,8 @@ class AutoClosePopup(Form):
 # CONFIGURACIÓN
 # -------------------------------------------------------------
 
-SYSTEMS_POSITIVOS = ["A1+", "A2+", "A3+", "L1", "L2", "L3", "L4", "L5", "L+1_AUTONOMO_ASPIRACIÓN CO2", "L+2_AUTONOMO_ASPIRACIÓN CO2"]
-SYSTEMS_NEGATIVOS = ["A1-", "A2-", "A3-", "L-1_AUTONOMO_ASPIRACIÓN CO2"]
+SYSTEMS_POSITIVOS = ["A1+", "A2+", "A3+", "L1", "L2", "L3", "L4", "L5", "L+1_AUTONOMO_ASPIRACIÓN CO2", "L+2_AUTONOMO_ASPIRACIÓN CO2", "L+1_AUTONOMO_LÍQUIDO CO2", "L+2_AUTONOMO_LÍQUIDO CO2"]
+SYSTEMS_NEGATIVOS = ["A1-", "A2-", "A3-", "L-1_AUTONOMO_ASPIRACIÓN CO2", "L-1_AUTONOMO_LÍQUIDO CO2", "L-2_AUTONOMO_ASPIRACIÓN CO2", "L-2_AUTONOMO_LÍQUIDO CO2"]
 
 SIZE_INCH_TO_MM = {
     "2 5/8": 66.675,

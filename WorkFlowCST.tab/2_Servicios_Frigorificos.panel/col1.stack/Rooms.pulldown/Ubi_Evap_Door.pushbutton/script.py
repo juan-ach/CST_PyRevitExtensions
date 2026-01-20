@@ -4,7 +4,6 @@ __title__ = "Evap/Door Location"
 __author__ = "Juan Achenbach"
 __version__ = 'Version: 1.0'
 __doc__ = """Version: 1.0
-Date    = 10.12.2025
 _____________________________________________________________________
 Description:
 
@@ -15,8 +14,6 @@ How-to:
 Just run the script to unpin set parametere values
 
 IMPORTANT: IN CHAMBERS SHARED BY TWO WALLS, IT CAN FAIL, SO CHECK MANUALLY IF CORRECT VALUE WAS PLACED !!!
-_____________________________________________________________________
-Last update: 10.12.2025
 _____________________________________________________________________
 Author: Juan Manuel Achenbach Anguita & ChatGPT"""
 
