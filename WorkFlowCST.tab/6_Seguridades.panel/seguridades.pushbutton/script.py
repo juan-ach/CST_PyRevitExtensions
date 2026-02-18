@@ -10,7 +10,7 @@ view = doc.ActiveView
 uidoc = revit.uidoc
 
 # --- CONFIGURATION ---
-TAG_FAMILY_NAME = "CST_TAG Seguridad_v3"
+TAG_FAMILY_NAMES = ["CST_TAG Seguridad_v3", "CST_TAG Seguridad_v3 - cat"]
 TYPE_SMALL = "Detalle 3" # < 20,000
 TYPE_LARGE = "Detalle 2" # >= 20,000
 TYPE_CONG = "Detalle 1"  # Override
@@ -153,14 +153,35 @@ tag_sym_large = None # Detalle 2
 tag_sym_cong = None  # Detalle 1
 tag_sym_o = None     # Detalle 4
 
+# Identify which family is present
+found_family_name = None
+present_families = set()
+
 for fs in fam_symbols:
-    # Check Family Name
     try:
         fam_name = fs.FamilyName
     except:
-        fam_name = fs.Family.Name # Fallback
+        fam_name = fs.Family.Name
+    present_families.add(fam_name)
+
+# Pick the first one that exists
+for name in TAG_FAMILY_NAMES:
+    if name in present_families:
+        found_family_name = name
+        break
+
+if not found_family_name:
+    script.get_output().print_md("ERROR: Could not find any of the required Tag Families: {}".format(", ".join(TAG_FAMILY_NAMES)))
+    script.exit()
+
+# Now extract symbols for that family
+for fs in fam_symbols:
+    try:
+        fam_name = fs.FamilyName
+    except:
+        fam_name = fs.Family.Name
         
-    if fam_name != TAG_FAMILY_NAME: continue
+    if fam_name != found_family_name: continue
     
     # Check Type Name
     p_sym = fs.get_Parameter(BuiltInParameter.SYMBOL_NAME_PARAM)
@@ -173,7 +194,7 @@ for fs in fam_symbols:
         elif type_name == TYPE_O: tag_sym_o = fs
 
 if not all([tag_sym_small, tag_sym_large, tag_sym_cong, tag_sym_o]):
-    script.get_output().print_md("ERROR: Missing one or more Tag Types (Detalle 1, 2, 3, 4) in Family '{}'".format(TAG_FAMILY_NAME))
+    script.get_output().print_md("ERROR: Missing one or more Tag Types in Family '{}'".format(found_family_name))
     script.exit()
 
 # 4. Process
@@ -204,7 +225,7 @@ for eq in equips:
     u_upper = ubic.upper()
     
     # 1. Overrides
-    if "CONG." in u_upper:
+    if "CONG" in u_upper:
         target_sym = tag_sym_cong
     elif "O." in u_upper:
         target_sym = tag_sym_o
