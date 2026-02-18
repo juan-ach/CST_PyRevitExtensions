@@ -18,7 +18,7 @@ How-to:
 _____________________________________________________________________
 Author: Juan Manuel Achenbach Anguita & ChatGPT"""
 
-from pyrevit import revit
+from pyrevit import revit, forms
 from Autodesk.Revit.DB import *
 from Autodesk.Revit.DB.Mechanical import MechanicalEquipment
 from Autodesk.Revit.DB.Plumbing import Pipe
@@ -58,6 +58,35 @@ class AutoClosePopup(Form):
 
 
 # ==================================================
+# SELECCIÓN DE ESCALA
+# ==================================================
+# Los offsets base están calibrados para escala 1:200.
+# El factor escala ajusta los offsets proporcionalmente.
+
+SCALE_OPTIONS = {
+    "1:50":  50,
+    "1:75":  75,
+    "1:100": 100,
+    "1:150": 150,
+    "1:200": 200,
+    "1:500": 500,
+}
+
+selected_scale_str = forms.SelectFromList.show(
+    sorted(SCALE_OPTIONS.keys(), key=lambda x: SCALE_OPTIONS[x]),
+    title="Selecciona la escala del plano",
+    prompt="Escala del plano activo:",
+    multiselect=False
+)
+
+if not selected_scale_str:
+    import sys
+    sys.exit()
+
+SCALE_FACTOR = SCALE_OPTIONS[selected_scale_str] / 200.0
+
+
+# ==================================================
 # CONFIGURACIÓN
 # ==================================================
 
@@ -66,13 +95,13 @@ NOMBRE_FAMILIA_TAG_EQ = "CST_TAG Equipos Mecanicos v5"
 TIPO_TAG_EQ_MUEBLE = "mueble modulos"
 TIPO_TAG_EQ_EVAP = "Evaporador"
 
-# Offsets en pies para la etiqueta DEL EQUIPO (relativos al punto del equipo)
-OFFSET_EQ_MUEBLE_X = 0.0 * 3.28084
-OFFSET_EQ_MUEBLE_Y = -0.9 * 3.28084
+# Offsets base (calibrados para 1:200) escalados al plano seleccionado
+OFFSET_EQ_MUEBLE_X = 0.0   * 3.28084 * SCALE_FACTOR
+OFFSET_EQ_MUEBLE_Y = -0.9  * 3.28084 * SCALE_FACTOR
 OFFSET_EQ_MUEBLE_Z = 0.0
 
-OFFSET_EQ_EVAP_X   = 0.0 * 3.28084
-OFFSET_EQ_EVAP_Y   = -1 * 3.28084
+OFFSET_EQ_EVAP_X   = 0.0   * 3.28084 * SCALE_FACTOR
+OFFSET_EQ_EVAP_Y   = -1.0  * 3.28084 * SCALE_FACTOR
 OFFSET_EQ_EVAP_Z   = 0.0
 
 # Condiciones de búsqueda en el nombre (se buscará en Family, Tipo y Nombre)
@@ -85,27 +114,25 @@ COND_EVAP   = "evap"
 NOMBRE_FAMILIA_TAG_TUBO = "CST_TAG Diametro Tubería v28"   # <-- ajusta si hace falta
 TIPO_TAG_TUBO = "1.5"                                      # <-- ajusta si hace falta
 
-# Offsets en pies para las etiquetas de tubería,
-# RELATIVOS a la posición de la etiqueta del EQUIPO,
-# diferenciados por tipo de equipo ("mueble", "ucond", "evap").
+# Offsets de tubería escalados al plano seleccionado
 
 # --- Equipos tipo "mueble" ---
-OFFSET_TUBO_MUEBLE_X = -0.7 * 3.28084
-OFFSET_TUBO_MUEBLE_Y = -1.1 * 3.28084
+OFFSET_TUBO_MUEBLE_X = -0.7  * 3.28084 * SCALE_FACTOR
+OFFSET_TUBO_MUEBLE_Y = -1.1  * 3.28084 * SCALE_FACTOR
 OFFSET_TUBO_MUEBLE_Z = 0.0
-STEP_TUBO_MUEBLE_X   = 1 * 3.28084   # separación entre tags en X
+STEP_TUBO_MUEBLE_X   =  1.0  * 3.28084 * SCALE_FACTOR
 
 # --- Equipos tipo "ucond" ---
-OFFSET_TUBO_UCOND_X = -0.7 * 3.28084
-OFFSET_TUBO_UCOND_Y = -0.3 * 3.28084
+OFFSET_TUBO_UCOND_X = -0.7  * 3.28084 * SCALE_FACTOR
+OFFSET_TUBO_UCOND_Y = -0.3  * 3.28084 * SCALE_FACTOR
 OFFSET_TUBO_UCOND_Z = 0.0
-STEP_TUBO_UCOND_X   = 1 * 3.28084   # puedes cambiarlo si quieres otro patrón
+STEP_TUBO_UCOND_X   =  1.0  * 3.28084 * SCALE_FACTOR
 
 # --- Equipos tipo "evap" ---
-OFFSET_TUBO_EVAP_X = -0.35 * 3.28084
-OFFSET_TUBO_EVAP_Y = -0.3 * 3.28084
+OFFSET_TUBO_EVAP_X = -0.35 * 3.28084 * SCALE_FACTOR
+OFFSET_TUBO_EVAP_Y = -0.3  * 3.28084 * SCALE_FACTOR
 OFFSET_TUBO_EVAP_Z = 0.0
-STEP_TUBO_EVAP_X   = 0.85 * 3.28084
+STEP_TUBO_EVAP_X   =  0.85 * 3.28084 * SCALE_FACTOR
 
 
 # ==================================================
