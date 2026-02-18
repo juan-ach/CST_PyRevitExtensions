@@ -10,11 +10,6 @@ Description:
 Create the same Mechanical Equipment tag for ALL mechanical equipment
 in the active view (skips already tagged elements).
 _____________________________________________________________________
-How-to:
-
-1.- Pin all elements with Pin tool (optional)
-2.- Run this script
-_____________________________________________________________________
 Author: Juan Manuel Achenbach Anguita & ChatGPT"""
 
 from pyrevit import revit
@@ -53,8 +48,12 @@ class AutoClosePopup(Form):
 # ==================================================
 # CONFIGURACIÓN
 # ==================================================
-NOMBRE_FAMILIA_TAG = "CST_rectangulo informativo_v14_catalan"
-TIPO_TAG = "evaporadores"
+POSIBLES_FAMILIAS = [
+    "CST_rectangulo informativo_v14_catalan",
+    "CST_rectangulo informativo_v11_castellano"
+]
+TIPOS_REQUERIDOS = ["1 modulo", "2 modulos", "3 modulos"]
+NOMBRE_FAMILIA_TAG = None # Se definirá al encontrar la familia
 
 # Offsets en metros -> convertidos a pies (Revit trabaja en pies)
 # Ajusta a tu gusto:
@@ -92,32 +91,71 @@ def calcular_punto_tag(elem, dx=0, dy=0, dz=0):
     return None
 
 # ==================================================
+# Helper: Check numeric value (float/int/string)
+# ==================================================
+def get_param_float(elem, param_name):
+    p = elem.LookupParameter(param_name)
+    if not p:
+        return 0.0
+    if p.StorageType == StorageType.Double:
+        return p.AsDouble()
+    if p.StorageType == StorageType.Integer:
+        return float(p.AsInteger())
+    if p.StorageType == StorageType.String:
+        try:
+            val_str = p.AsString()
+            if val_str:
+                return float(val_str)
+        except:
+            pass
+    return 0.0
+
+# ==================================================
 # Buscar el tipo de etiqueta (IronPython-safe)
 # ==================================================
-tag_symbol = None
+tag_symbols = {} # Map: "tipo" -> FamilySymbolElement
 
+# 1. Buscar familia disponible
 for fs in FilteredElementCollector(doc) \
         .OfClass(FamilySymbol) \
         .OfCategory(BuiltInCategory.OST_MechanicalEquipmentTags):
 
-    tipo_nombre = fs.get_Parameter(BuiltInParameter.SYMBOL_NAME_PARAM).AsString()
-
-    if fs.FamilyName == NOMBRE_FAMILIA_TAG and tipo_nombre == TIPO_TAG:
-        tag_symbol = fs
+    if fs.FamilyName in POSIBLES_FAMILIAS:
+        NOMBRE_FAMILIA_TAG = fs.FamilyName
         break
 
-if not tag_symbol:
+if not NOMBRE_FAMILIA_TAG:
     raise Exception(
-        u"No se encontró el tipo de etiqueta '{}' dentro de la familia '{}'.".format(
-            TIPO_TAG, NOMBRE_FAMILIA_TAG
+        u"No se encontró ninguna de las familias de etiquetas esperadas: {}.".format(
+            ", ".join(POSIBLES_FAMILIAS)
         )
     )
 
-# Activar símbolo si es necesario
-t = Transaction(doc, "Activar tipo de etiqueta")
+# 2. Cargar todos los tipos requeridos de esa familia
+for fs in FilteredElementCollector(doc) \
+        .OfClass(FamilySymbol) \
+        .OfCategory(BuiltInCategory.OST_MechanicalEquipmentTags):
+
+    if fs.FamilyName == NOMBRE_FAMILIA_TAG:
+        tn = fs.get_Parameter(BuiltInParameter.SYMBOL_NAME_PARAM).AsString()
+        if tn in TIPOS_REQUERIDOS:
+            tag_symbols[tn] = fs
+
+# 3. Verificar que existen todos
+faltantes = [t for t in TIPOS_REQUERIDOS if t not in tag_symbols]
+if faltantes:
+    raise Exception(
+        u"La familia '{}' no tiene los tipos requeridos: {}.".format(
+            NOMBRE_FAMILIA_TAG, ", ".join(faltantes)
+        )
+    )
+
+# 4. Activar símbolos si es necesario
+t = Transaction(doc, "Activar tipos de etiqueta")
 t.Start()
-if not tag_symbol.IsActive:
-    tag_symbol.Activate()
+for fs in tag_symbols.values():
+    if not fs.IsActive:
+        fs.Activate()
 t.Commit()
 
 # ==================================================
@@ -158,6 +196,61 @@ for eq in equipos:
     if eq.Id in equipos_ya_etiquetados:
         continue
 
+    skip = False
+    # Parametros a comprobar: si alguno es 0, no etiquetar
+    for p_name in ["Aspiración", "Líquido", "W_Metro"]:
+        param = eq.LookupParameter(p_name)
+        if param:
+            # Check por tipo de almacenamiento
+            if param.StorageType == StorageType.Double:
+                # 0.001 es una tolerancia razonable para float
+                if abs(param.AsDouble()) < 0.001:
+                    skip = True
+                    break
+            elif param.StorageType == StorageType.Integer:
+                if param.AsInteger() == 0:
+                    skip = True
+                    break
+            elif param.StorageType == StorageType.String:
+                # Intentar convertir string a float ("0", "0.0")
+                try:
+                    val_str = param.AsString()
+                    if val_str and abs(float(val_str)) < 0.001:
+                        skip = True
+                        break
+                except:
+                    pass
+    
+    if skip:
+        continue
+
+    # Determinar tipo de tag
+    tipo_a_usar = "1 modulo" # Default
+
+    # Lógica especial para familias "Mueble"
+    elem_fam_name = eq.Symbol.FamilyName
+    if "Mueble" in elem_fam_name:
+        try:
+            m2 = get_param_float(eq, "Modulo_2")
+            m3 = get_param_float(eq, "Modulo_3")
+            
+            # Tolerancia float
+            is_m2_nonzero = abs(m2) > 0.001
+            is_m3_nonzero = abs(m3) > 0.001
+
+            if is_m2_nonzero and not is_m3_nonzero:
+                tipo_a_usar = "2 modulos"
+            elif is_m2_nonzero and is_m3_nonzero:
+                tipo_a_usar = "3 modulos"
+            # Si ninguno es != 0, o solo m3 lo es (raro), se queda en "1 modulo"
+        except:
+            pass
+            
+    # Obtener el símbolo correspondiente
+    simbolo_tag = tag_symbols.get(tipo_a_usar)
+    if not simbolo_tag:
+        continue # No debería pasar si validamos al inicio
+
     punto_tag = calcular_punto_tag(eq, OFFSET_X, OFFSET_Y, OFFSET_Z)
     if not punto_tag:
         continue
@@ -173,7 +266,7 @@ for eq in equipos:
             punto_tag
         )
 
-        tag.ChangeTypeId(tag_symbol.Id)
+        tag.ChangeTypeId(simbolo_tag.Id)
         contador += 1
 
     except:
@@ -185,8 +278,8 @@ t.Commit()
 # Popup final
 # ==================================================
 popup = AutoClosePopup(
-    u"Se etiquetaron {} equipos mecánicos con:\nFamilia: '{}'\nTipo: '{}'".format(
-        contador, NOMBRE_FAMILIA_TAG, TIPO_TAG
+    u"Se etiquetaron {} equipos mecánicos con:\nFamilia: '{}'\n(Tipos dinámicos usados)".format(
+        contador, NOMBRE_FAMILIA_TAG
     )
 )
 popup.ShowDialog()

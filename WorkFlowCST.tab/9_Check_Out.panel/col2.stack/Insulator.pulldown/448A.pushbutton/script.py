@@ -66,7 +66,7 @@ class AutoClosePopup(Form):
 # -------------------------------------------------------------
 
 SYSTEMS_POSITIVOS = ["A1+", "A2+", "A3+", "L1+_ASPIRACIÓN", "L2+_ASPIRACIÓN"]
-SYSTEMS_NEGATIVOS = ["A1-", "A2-", "A3-", "L1-_ASPIRACIÓN", "L2-_ASPIRACIÓN"]
+SYSTEMS_NEGATIVOS = ["A1-", "A2-", "A3-", "L1-_ASPIRACIÓN", "L2-_ASPIRACIÓN", "L-1_AUTONOMO_ASPIRACIÓN", "L-2_AUTONOMO_ASPIRACIÓN"]
 
 SIZE_INCH_TO_MM = {
     "2 5/8": 66.675,

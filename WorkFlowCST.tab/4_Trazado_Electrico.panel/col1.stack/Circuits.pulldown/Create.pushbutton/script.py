@@ -38,6 +38,7 @@ doc = uidoc.Document
 PANEL_NAME_FILTER = [
     "Cuadro Servicios Frigorificos",
     "Cuadro Servicios Frigoríficos HD",
+    "Cuadro Servicios Frigoríficos SD",
     "Quadre Serveis Frigorífics",
     "Cuadro Central frigorífica"
     # Añade aquí los posibles nombres de Cuadros Eléctricos
