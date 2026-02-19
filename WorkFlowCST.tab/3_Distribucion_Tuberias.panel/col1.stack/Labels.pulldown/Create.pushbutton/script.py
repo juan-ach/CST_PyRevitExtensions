@@ -58,32 +58,97 @@ class AutoClosePopup(Form):
 
 
 # ==================================================
-# SELECCIÓN DE ESCALA
+# SELECCIÓN DE ESCALA  (formulario WPF personalizado)
 # ==================================================
 # Los offsets base están calibrados para escala 1:200.
 # El factor escala ajusta los offsets proporcionalmente.
 
-SCALE_OPTIONS = {
-    "1:50":  50,
-    "1:75":  75,
-    "1:100": 100,
-    "1:150": 150,
-    "1:200": 200,
-    "1:500": 500,
-}
+import sys
+import clr
+clr.AddReference("PresentationFramework")
+clr.AddReference("PresentationCore")
+clr.AddReference("WindowsBase")
 
-selected_scale_str = forms.SelectFromList.show(
-    sorted(SCALE_OPTIONS.keys(), key=lambda x: SCALE_OPTIONS[x]),
-    title="Selecciona la escala del plano",
-    prompt="Escala del plano activo:",
-    multiselect=False
-)
+from System.Windows import (Window, WindowStartupLocation, Thickness,
+                             HorizontalAlignment, VerticalAlignment)
+from System.Windows.Controls import StackPanel as WpfStackPanel
+from System.Windows.Controls import Label as WpfLabel
+from System.Windows.Controls import ListBox as WpfListBox
+from System.Windows.Controls import ListBoxItem as WpfListBoxItem
+from System.Windows.Controls import Button as WpfButton
+from System.Windows.Controls import Orientation as WpfOrientation
 
-if not selected_scale_str:
-    import sys
+SCALE_OPTIONS_ORDERED = ["1:50", "1:75", "1:100", "1:150", "1:200", "1:500"]
+SCALE_VALUES = {"1:50": 50, "1:75": 75, "1:100": 100,
+                "1:150": 150, "1:200": 200, "1:500": 500}
+
+
+class ScalePickerWindow(Window):
+    def __init__(self):
+        self.Title = "Coldsulting TUB Lebeler"
+        self.Width = 280
+        self.SizeToContent = System.Windows.SizeToContent.Height
+        self.ResizeMode = System.Windows.ResizeMode.NoResize
+        self.WindowStartupLocation = WindowStartupLocation.CenterScreen
+        self.selected = None
+
+        root = WpfStackPanel()
+        root.Margin = Thickness(16)
+
+        lbl = WpfLabel()
+        lbl.Content = "Escala del plano activo:"
+        lbl.Margin = Thickness(0, 0, 0, 6)
+        root.Children.Add(lbl)
+
+        self.listbox = WpfListBox()
+        self.listbox.Margin = Thickness(0, 0, 0, 12)
+        for s in SCALE_OPTIONS_ORDERED:
+            item = WpfListBoxItem()
+            item.Content = s
+            self.listbox.Items.Add(item)
+        self.listbox.SelectedIndex = 4   # 1:200 por defecto
+        root.Children.Add(self.listbox)
+
+        btn_panel = WpfStackPanel()
+        btn_panel.Orientation = WpfOrientation.Horizontal
+        btn_panel.HorizontalAlignment = HorizontalAlignment.Right
+
+        btn_ok = WpfButton()
+        btn_ok.Content = "OK"
+        btn_ok.Width = 80
+        btn_ok.Margin = Thickness(0, 0, 8, 0)
+        btn_ok.Click += self.on_ok
+        btn_panel.Children.Add(btn_ok)
+
+        btn_cancel = WpfButton()
+        btn_cancel.Content = "Cancelar"
+        btn_cancel.Width = 80
+        btn_cancel.Click += self.on_cancel
+        btn_panel.Children.Add(btn_cancel)
+
+        root.Children.Add(btn_panel)
+        self.Content = root
+
+    def on_ok(self, sender, args):
+        if self.listbox.SelectedItem:
+            self.selected = self.listbox.SelectedItem.Content
+        self.DialogResult = True
+        self.Close()
+
+    def on_cancel(self, sender, args):
+        self.DialogResult = False
+        self.Close()
+
+
+picker = ScalePickerWindow()
+result = picker.ShowDialog()
+
+if not result or not picker.selected:
     sys.exit()
 
-SCALE_FACTOR = SCALE_OPTIONS[selected_scale_str] / 200.0
+selected_scale_str = picker.selected
+SCALE_FACTOR = SCALE_VALUES[selected_scale_str] / 200.0
+
 
 
 # ==================================================
