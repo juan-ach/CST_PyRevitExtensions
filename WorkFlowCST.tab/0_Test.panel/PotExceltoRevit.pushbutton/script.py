@@ -8,7 +8,7 @@ Flujo:
   3. Abre un diálogo para que el usuario seleccione el fichero Excel.
   4. Busca coincidencias entre los valores de "ubicación" y la columna C
      de la pestaña "3. ELEM. PRINCIPALES I.F." del Excel.
-  5. Obtiene el valor calculado de la columna G en la fila coincidente.
+  5. Obtiene el valor calculado de la columna G y lo ajusta con la columna D (G si D=1, si no G/D).
   6. Escribe ese valor en el parámetro "Pot.Frigorifica" del equipo.
 
 Nota: la lectura del Excel se realiza con openpyxl (data_only=True), que lee
