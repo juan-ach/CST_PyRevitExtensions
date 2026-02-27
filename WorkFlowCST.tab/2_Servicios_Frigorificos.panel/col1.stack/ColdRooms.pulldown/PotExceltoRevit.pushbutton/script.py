@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Script: autoubipot - Asignacion automatica de Pot.Frigorifica a Evaporadores
+Script: Asignacion automatica de Pot.Frigorifica a Evaporadores
 Flujo:
   1. Recoge todos los equipos mecanicos cuya familia contenga "Evaporadores"
      excluyendo los que tengan "Hielo" en su nombre de tipo.
@@ -8,7 +8,7 @@ Flujo:
   3. Abre un dialogo para que el usuario seleccione el fichero Excel.
   4. Busca coincidencias entre los valores de "ubicacion" y la columna C
      de la pestana "3. ELEM. PRINCIPALES I.F." del Excel.
-  5. Obtiene el valor calculado de la columna G y lo ajusta con la columna D (G si D=1, si no G/D).
+  5. Obtiene el valor calculado de la columna G y lo ajusta con la columna D (Número de Evaps.).
   6. Escribe ese valor en el parametro "Pot.Frigorifica" del equipo.
 
 Nota: la lectura del Excel se realiza con openpyxl (data_only=True), que lee
