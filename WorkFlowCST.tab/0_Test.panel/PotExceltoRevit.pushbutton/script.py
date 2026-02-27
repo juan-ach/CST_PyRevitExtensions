@@ -2,12 +2,13 @@
 """
 Script: autoubipot - Asignación automática de Pot.Frigorifica a Evaporadores
 Flujo:
-  1. Recoge todos los equipos mecánicos cuya familia contenga "Evaporadores".
+  1. Recoge todos los equipos mecánicos cuya familia contenga "Evaporadores"
+     excluyendo los que tengan "Hielo" en su nombre de tipo.
   2. Lee el parámetro de ejemplar "ubicación" de cada equipo.
   3. Abre un diálogo para que el usuario seleccione el fichero Excel.
   4. Busca coincidencias entre los valores de "ubicación" y la columna C
      de la pestaña "3. ELEM. PRINCIPALES I.F." del Excel.
-  5. Obtiene el valor calculado de la columna G en la fila coincidente.
+  5. Obtiene el valor calculado de la columna G y lo ajusta con la columna D (G si D=1, si no G/D).
   6. Escribe ese valor en el parámetro "Pot.Frigorifica" del equipo.
 
 Nota: la lectura del Excel se realiza con openpyxl (data_only=True), que lee
@@ -25,7 +26,7 @@ output = script.get_output()
 
 # ===========================================================================
 # PASO 1: Recopilar equipos mecánicos que contengan "Evaporadores" en la
-#         familia.
+#         familia, excluyendo los que tengan "Hielo" en el nombre de tipo.
 # ===========================================================================
 
 doc = revit.doc
@@ -42,7 +43,8 @@ for equipo in collector:
     if familia is None:
         continue
     nombre_familia = familia.AsValueString() or ""
-    if "Evaporadores" in nombre_familia:
+    nombre_tipo = equipo.Name or ""
+    if "Evaporadores" in nombre_familia and "Hielo" not in nombre_tipo:
         evaporadores.append(equipo)
 
 if not evaporadores:
