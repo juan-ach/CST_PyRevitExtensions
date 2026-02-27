@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
 """
 Helper externo: lee la hoja "3. ELEM. PRINCIPALES I.F." del fichero Excel
-indicado como argumento y devuelve un JSON {clave_colC: valor_colG} por stdout.
+indicado como argumento y devuelve un JSON {clave_colC: valor_colG_ajustado} por stdout.
+
+Regla de ajuste:
+- Si el valor de la columna D en la fila es 1, se usa G tal cual.
+- Si el valor de la columna D es distinto de 1, se usa G / D.
 
 Uso:
     python read_excel_helper.py "<ruta_excel>" "<nombre_hoja>"
@@ -12,6 +16,19 @@ Requiere openpyxl instalado en el Python del sistema:
 import sys
 import os
 import json
+
+
+def _to_float(value):
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        try:
+            return float(str(value).replace(",", ".").strip())
+        except (ValueError, TypeError):
+            return None
+
 
 def main():
     if len(sys.argv) < 3:
@@ -52,46 +69,68 @@ def main():
 
     ws = wb[sheet_name]
     IDX_C = 2  # Columna C (0-based)
+    IDX_D = 3  # Columna D (0-based)
     IDX_G = 6  # Columna G (0-based)
     MAX_ROW = 300
 
     resultado = {}
     none_g = []
+    invalid_d = []
+    zero_d = []
 
     for row in ws.iter_rows(min_row=2, max_row=MAX_ROW, values_only=True):
         if len(row) <= IDX_G:
             continue
+
         clave = row[IDX_C]
-        valor = row[IDX_G]
+        valor_d = row[IDX_D] if len(row) > IDX_D else None
+        valor_g = row[IDX_G]
+
         if clave is None:
             continue
+
         clave_str = str(clave).strip()
         if not clave_str:
             continue
-            
+
         # Si la clave ya fue encontrada antes, la omitimos (nos quedamos con el primer valor)
         if clave_str in resultado:
             continue
-            
-        if valor is not None:
-            try:
-                valor_g = float(valor)
-            except (ValueError, TypeError):
-                valor_g = None
-        else:
-            valor_g = None
+
+        valor_g_num = _to_float(valor_g)
+        if valor_g_num is None:
             none_g.append(clave_str)
-        resultado[clave_str] = valor_g
+            resultado[clave_str] = None
+            continue
+
+        divisor_d = _to_float(valor_d)
+        if divisor_d is None:
+            invalid_d.append(clave_str)
+            resultado[clave_str] = None
+            continue
+
+        if divisor_d == 0:
+            zero_d.append(clave_str)
+            resultado[clave_str] = None
+            continue
+
+        if divisor_d == 1:
+            resultado[clave_str] = valor_g_num
+        else:
+            resultado[clave_str] = valor_g_num / divisor_d
 
     wb.close()
 
     output = {
         "data": resultado,
         "none_g": none_g,
+        "invalid_d": invalid_d,
+        "zero_d": zero_d,
         "sheets": wb.sheetnames,
         "max_row": MAX_ROW
     }
     print(json.dumps(output, ensure_ascii=True))
+
 
 if __name__ == "__main__":
     main()
