@@ -127,14 +127,33 @@ import os
 
 HOJA_NOMBRE = "3. ELEM. PRINCIPALES I.F."
 
-# Ruta fija al helper (fuera de la carpeta del boton)
-_helper = r"C:\Users\USUARIO-1\Desktop\JUAN\PyRevit Extensions\WorkFlowCST.extension\Helpers\Lectura de excel para seteo de potencia de evaporadores\read_excel_helper.py"
+# Resolver la ruta del helper de forma portable:
+# subimos desde este script hasta encontrar la carpeta raiz *.extension.
+_this_dir = os.path.dirname(os.path.abspath(__file__))
+_cursor = _this_dir
+_extension_root = None
+while _cursor and _cursor != os.path.dirname(_cursor):
+    if _cursor.lower().endswith(".extension"):
+        _extension_root = _cursor
+        break
+    _cursor = os.path.dirname(_cursor)
+
+if _extension_root:
+    _helper = os.path.join(
+        _extension_root,
+        "Helpers",
+        "Lectura de excel para seteo de potencia de evaporadores",
+        "read_excel_helper.py"
+    )
+else:
+    _helper = ""
 
 if not os.path.isfile(_helper):
     forms.alert(
         "No se encontro el fichero auxiliar:\n{}\n\n"
-        "Asegurate de que 'read_excel_helper.py' esta en la misma carpeta "
-        "que 'script.py'.".format(_helper),
+        "No se pudo resolver la ruta del helper desde la extension.\n"
+        "Revisa que exista en:\n"
+        "WorkFlowCST.extension\\Helpers\\Lectura de excel para seteo de potencia de evaporadores\\read_excel_helper.py".format(_helper),
         exitscript=True
     )
 

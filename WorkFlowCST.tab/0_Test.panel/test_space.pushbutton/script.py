@@ -1,324 +1,374 @@
 # -*- coding: utf-8 -*-
+# pyRevit script: Migración base de "antes de mandar a presto_v2.dyn"
+# Revit 2025
 
-"""
-Script: autoubipot - Asignación automática de Pot.Frigorifica a Evaporadores
-Flujo:
-  1. Recoge todos los equipos mecánicos cuya familia contenga "Evaporadores"
-     excluyendo los que tengan "Hielo" en su nombre de tipo.
-  2. Lee el parámetro de ejemplar "ubicación" de cada equipo.
-  3. Abre un diálogo para que el usuario seleccione el fichero Excel.
-  4. Busca coincidencias entre los valores de "ubicación" y la columna C
-     de la pestaña "3. ELEM. PRINCIPALES I.F." del Excel.
-  5. Obtiene el valor calculado de la columna G y lo ajusta con la columna D (G si D=1, si no G/D).
-  6. Escribe ese valor en el parámetro "Pot.Frigorifica" del equipo.
+from __future__ import print_function, division
 
-Nota: la lectura del Excel se realiza con openpyxl (data_only=True), que lee
-los valores cacheados por Excel (último resultado calculado guardado en el
-fichero). El fichero debe estar guardado con los cálculos actualizados.
-"""
-
-from pyrevit import revit, DB, forms, script
 import clr
-import os
-import sys
+clr.AddReference("RevitAPI")
+clr.AddReference("System.Windows.Forms")
+clr.AddReference("System.Drawing")
 
-logger = script.get_logger()
-output = script.get_output()
+from pyrevit import revit, DB
+from Autodesk.Revit.DB.Plumbing import PipeInsulation  # por si lo necesitas más adelante
 
-# ===========================================================================
-# PASO 1: Recopilar equipos mecánicos que contengan "Evaporadores" en la
-#         familia, excluyendo los que tengan "Hielo" en el nombre de tipo.
-# ===========================================================================
+import System
+from System.Windows.Forms import Form, Label, Timer
+import System.Windows.Forms
+import System.Drawing
 
 doc = revit.doc
 
-collector = (
-    DB.FilteredElementCollector(doc)
-    .OfCategory(DB.BuiltInCategory.OST_MechanicalEquipment)
-    .WhereElementIsNotElementType()
-)
+# -------------------------------------------------------------
+# POPUP AUTOCIERRE
+# -------------------------------------------------------------
 
-evaporadores = []
-for equipo in collector:
-    familia = equipo.get_Parameter(DB.BuiltInParameter.ELEM_FAMILY_PARAM)
-    if familia is None:
-        continue
-    nombre_familia = familia.AsValueString() or ""
-    nombre_tipo = equipo.Name or ""
-    if "Evaporadores" in nombre_familia and "Hielo" not in nombre_tipo:
-        evaporadores.append(equipo)
+class AutoClosePopup(Form):
+    def __init__(self, message, title=u"Info", duration_ms=10000):
+        self.Text = title
+        self.Width = 460
+        self.Height = 240
+        self.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen
 
-if not evaporadores:
-    forms.alert(
-        "No se encontraron equipos mecánicos con 'Evaporadores' en el nombre de familia.",
-        exitscript=True
-    )
+        label = Label()
+        label.Text = message
+        label.Dock = System.Windows.Forms.DockStyle.Fill
+        label.TextAlign = System.Drawing.ContentAlignment.MiddleCenter
+        label.Font = System.Drawing.Font("Arial", 10)
+        self.Controls.Add(label)
 
-output.print_md("### Equipos encontrados: {}".format(len(evaporadores)))
+        timer = Timer()
+        timer.Interval = duration_ms
+        timer.Tick += self.close_popup
+        timer.Start()
 
-# ===========================================================================
-# PASO 2: Leer el parámetro de ejemplar "ubicación" de cada equipo.
-# ===========================================================================
+    def close_popup(self, sender, args):
+        self.Close()
 
-def get_param_value(element, param_name):
-    """Devuelve el valor de un parámetro de ejemplar como cadena, o None."""
-    param = element.LookupParameter(param_name)
-    if param is None:
+# -------------------------------------------------------------
+# UTILIDADES GENERALES
+# -------------------------------------------------------------
+
+PARAM_PARTIDAS = u"Partidas_PRESTO"
+PARAM_CODIGO   = u"Codigo_Presto"
+
+def set_param_safe(elem, param_name, value):
+    if elem is None:
+        return False
+    p = elem.LookupParameter(param_name)
+    if not p or p.IsReadOnly:
+        return False
+    try:
+        p.Set(value)
+        return True
+    except:
+        return False
+
+def get_param_str(elem, param_name):
+    if not elem:
+        return u""
+    p = elem.LookupParameter(param_name)
+    if not p:
+        return u""
+    val = p.AsString()
+    if not val:
+        val = p.AsValueString()
+    return val or u""
+
+
+# -------------------------------------------------------------
+# 1) ZÓCALOS (WALL SWEEP) + CÓDIGOS PRESTO
+#    (parte que ya migramos de tu otro Dynamo)
+# -------------------------------------------------------------
+
+ZOCALO_TYPE_NAME   = u"CST_Zocalo"
+SEARCH_ZOCALO_2    = u"zocalo 2 lados"
+SEARCH_ZOCALO_1    = u"zocalo 1 lado"
+
+WALLSWEEP_PARTIDA = u"09"
+WALLSWEEP_CODIGO  = u"ZOC.PP500.300"
+
+PARAM_TIPO          = u"Tipo"
+PARAM_NOMBRE_TIPO   = u"Nombre de tipo"
+
+def get_wall_type(elem):
+    if not isinstance(elem, DB.Wall):
         return None
-    storage = param.StorageType
-    if storage == DB.StorageType.String:
-        return param.AsString()
-    elif storage == DB.StorageType.Double:
-        return str(param.AsDouble())
-    elif storage == DB.StorageType.Integer:
-        return str(param.AsInteger())
-    elif storage == DB.StorageType.ElementId:
-        return str(param.AsElementId().IntegerValue)
+    try:
+        return elem.WallType
+    except:
+        try:
+            return doc.GetElement(elem.GetTypeId())
+        except:
+            return None
+
+def wall_matches_keywords(wall, keywords):
+    if not isinstance(keywords, (list, tuple)):
+        keywords = [keywords]
+
+    strings = []
+    strings.append(get_param_str(wall, PARAM_TIPO))
+    strings.append(get_param_str(wall, PARAM_NOMBRE_TIPO))
+
+    wtype = get_wall_type(wall)
+    if wtype:
+        try:
+            strings.append(wtype.get_Parameter(DB.BuiltInParameter.SYMBOL_NAME_PARAM).AsString())
+        except:
+            try:
+                strings.append(wtype.Name)
+            except:
+                pass
+
+    strings = [s.lower() for s in strings if s]
+
+    for kw in keywords:
+        kw_l = kw.lower()
+        for s in strings:
+            if kw_l in s:
+                return True
+    return False
+
+def find_wall_sweep_type_by_name(name):
+    coll = DB.FilteredElementCollector(doc).WhereElementIsElementType()
+    for et in coll:
+        try:
+            if et.Name == name:
+                return et
+        except:
+            continue
     return None
 
-# Diccionario {elemento: valor_ubicacion}
-equipos_ubicacion = {}
-for equipo in evaporadores:
-    ub = get_param_value(equipo, "ubicación")
-    if ub is None:
-        ub = get_param_value(equipo, "Ubicación")  # prueba con mayúscula
-    if ub is None:
-        ub = get_param_value(equipo, "UBICACION")
-    if ub:
-        ub = ub.strip()
-    equipos_ubicacion[equipo] = ub
+def create_wall_sweeps_for_walls(walls, sweep_type, both_sides=False):
+    created = []
 
-# Mostrar resumen rápido
-output.print_md("**Valores de 'ubicación' recogidos:**")
-for eq, ub in equipos_ubicacion.items():
-    nombre_tipo = eq.Name or "(sin tipo)"
-    output.print_md("- {} → `{}`".format(nombre_tipo, ub))
+    wstype_enum = DB.WallSweepType.Sweep
+    wsi = DB.WallSweepInfo(wstype_enum, False)  # horizontal
 
-# ===========================================================================
-# PASO 3: Selección del fichero Excel por parte del usuario.
-# ===========================================================================
+    # altura 0 (ya está en unidades internas)
+    wsi.Distance = 0.0
 
-excel_path = forms.pick_file(
-    file_ext="xlsm",
-    title="Selecciona el fichero Excel del proyecto"
-)
-
-if not excel_path:
-    forms.alert("No se seleccionó ningún fichero. Se cancela la operación.", exitscript=True)
-
-output.print_md("**Fichero seleccionado:** `{}`".format(excel_path))
-
-# ===========================================================================
-# PASO 4 y 5: Leer el Excel mediante un script auxiliar externo que se
-#             ejecuta con el Python del sistema (CPython), evitando las
-#             limitaciones de IronPython (entorno de pyRevit).
-#
-#  - El helper está en la carpeta de Helpers compartidos del proyecto.
-#  - Se llama con "py.exe" (Python Launcher para Windows).
-#  - El helper devuelve un JSON {clave_colC: valor_colG} por stdout.
-#  - IMPORTANTE: el fichero debe estar guardado en Excel con los cálculos
-#                actualizados (openpyxl lee valores cacheados).
-# ===========================================================================
-
-import subprocess
-import json
-import os
-
-HOJA_NOMBRE = "3. ELEM. PRINCIPALES I.F."
-
-# Ruta fija al helper (fuera de la carpeta del botón)
-_helper = r"C:\Users\USUARIO-1\Desktop\JUAN\PyRevit Extensions\WorkFlowCST.extension\Helpers\Lectura de excel para seteo de potencia de evaporadores\read_excel_helper.py"
-
-if not os.path.isfile(_helper):
-    forms.alert(
-        "No se encontró el fichero auxiliar:\n{}\n\n"
-        "Asegúrate de que 'read_excel_helper.py' está en la misma carpeta "
-        "que 'script.py'.".format(_helper),
-        exitscript=True
-    )
-
-# Llamar al helper con el Python del sistema usando el Launcher "py.exe"
-try:
-    proc = subprocess.Popen(
-        ["py", _helper, excel_path, HOJA_NOMBRE],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        creationflags=0x08000000  # CREATE_NO_WINDOW
-    )
-    stdout, stderr = proc.communicate()
-except OSError:
-    # "py" no disponible: intentar con "python"
-    try:
-        proc = subprocess.Popen(
-            ["python", _helper, excel_path, HOJA_NOMBRE],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            creationflags=0x08000000
-        )
-        stdout, stderr = proc.communicate()
-    except OSError as e:
-        forms.alert(
-            "No se encontró ningún Python del sistema (ni 'py' ni 'python').\n"
-            "Instala Python 3 desde python.org y asegúrate de que está en el PATH.\n\n"
-            "Error: {}".format(str(e)),
-            exitscript=True
-        )
-
-# Decodificar la salida del helper
-try:
-    raw = stdout.decode("utf-8").strip()
-    if not raw:
-        err_detail = stderr.decode("utf-8", errors="replace")
-        forms.alert(
-            "El script auxiliar no devolvió ningún resultado.\n\n"
-            "Stderr:\n{}".format(err_detail),
-            exitscript=True
-        )
-    helper_result = json.loads(raw)
-except Exception as e:
-    forms.alert(
-        "Error al interpretar la respuesta del script auxiliar:\n{}\n\n"
-        "Salida bruta:\n{}".format(str(e), stdout[:500]),
-        exitscript=True
-    )
-
-# Comprobar si el helper reportó un error
-if "error" in helper_result:
-    forms.alert(
-        "Error en la lectura del Excel:\n{}".format(helper_result["error"]),
-        exitscript=True
-    )
-
-excel_dict = helper_result.get("data", {})
-filas_con_none_g = helper_result.get("none_g", [])
-max_row = helper_result.get("max_row", 200)
-
-output.print_md("**Se analizó el documento hasta la fila:** {}".format(max_row))
-
-# Construir el diccionario final: {ubicacion_coincidente: pot_frigorifica}
-resultado = {}
-sin_coincidencia = []
-
-for equipo, ubicacion in equipos_ubicacion.items():
-    if not ubicacion:
-        output.print_md(
-            "- ⚠️ Equipo `{}` no tiene valor en el parámetro 'ubicación'. Se omite.".format(equipo.Name)
-        )
-        continue
-
-    if ubicacion in excel_dict:
-        pot = excel_dict[ubicacion]
-        resultado[equipo] = (ubicacion, pot)
-    else:
-        sin_coincidencia.append((equipo, ubicacion))
-
-# ===========================================================================
-# Comparativa: Equipos en el modelo vs Excel
-# ===========================================================================
-output.print_md("### 📊 Comparativa de Equipos (Modelo vs Excel)")
-if sin_coincidencia:
-    output.print_md("⚠️ **Los siguientes equipos están en el modelo de Revit pero NO se encontraron en el Excel:**")
-    for eq, ub in sin_coincidencia:
-        output.print_md("- `{}` — ubicación: `{}`".format(eq.Name, ub))
-else:
-    output.print_md("✅ **Todos los equipos ('Evaporadores') presentes en el modelo fueron correctamente hallados en el Excel.**")
-
-# Mostrar diccionario de coincidencias
-if resultado:
-    output.print_md("### ✅ Coincidencias encontradas:")
-    for eq, (ub, pot) in resultado.items():
-        output.print_md("- `{}` → clave: `{}` | Pot.Frigorifica: `{}`".format(eq.Name, ub, pot))
-
-# ===========================================================================
-# PASO 6: Escribir el valor de la columna G en el parámetro "Pot.Frigorifica"
-#         del equipo mecánico correspondiente.
-# ===========================================================================
-
-if not resultado:
-    forms.alert(
-        "No se encontraron coincidencias entre los valores de 'ubicación' "
-        "y la columna C del Excel. No se realizaron cambios.",
-        exitscript=True
-    )
-
-errores = []
-escritos = 0
-
-with revit.Transaction("Asignar Pot.Frigorifica a Evaporadores"):
-    for equipo, (ubicacion, pot_valor) in resultado.items():
-        if pot_valor is None:
-            output.print_md(
-                "- ⚠️ Valor nulo en columna G para ubicación `{}`. Se omite.".format(ubicacion)
-            )
+    for w in walls:
+        if not isinstance(w, DB.Wall):
             continue
 
-        param = equipo.LookupParameter("Pot.Frigorifica")
-        if param is None:
-            errores.append(
-                "Equipo `{}` no tiene el parámetro 'Pot.Frigorifica'.".format(equipo.Name)
-            )
-            continue
+        if both_sides:
+            wsi.WallSide = DB.WallSide.Exterior
+            ws_ext = DB.WallSweep.Create(w, sweep_type.Id, wsi)
+            if ws_ext:
+                created.append(ws_ext)
 
-        if param.IsReadOnly:
-            errores.append(
-                "El parámetro 'Pot.Frigorifica' del equipo `{}` es de solo lectura.".format(equipo.Name)
-            )
-            continue
+            wsi.WallSide = DB.WallSide.Interior
+            ws_int = DB.WallSweep.Create(w, sweep_type.Id, wsi)
+            if ws_int:
+                created.append(ws_int)
+        else:
+            ws = DB.WallSweep.Create(w, sweep_type.Id, wsi)
+            if ws:
+                created.append(ws)
 
+    return created
+
+def set_presto_on_wallsweeps(elems):
+    count_ok = 0
+    for e in elems:
+        ok1 = set_param_safe(e, PARAM_PARTIDAS, WALLSWEEP_PARTIDA)
+        ok2 = set_param_safe(e, PARAM_CODIGO, WALLSWEEP_CODIGO)
+        if ok1 or ok2:
+            count_ok += 1
+    return count_ok
+
+
+# -------------------------------------------------------------
+# 2) ASIGNACIÓN BÁSICA DE PARTIDAS POR CATEGORÍA
+#    (parte inferida claramente del Dynamo)
+# -------------------------------------------------------------
+
+PARTIDAS_BY_CATEGORY = {
+    DB.BuiltInCategory.OST_PipeCurves:      u"04",    # Tuberías
+    DB.BuiltInCategory.OST_DuctCurves:      u"01.09", # Conductos
+    DB.BuiltInCategory.OST_DuctFitting:     u"01.09", # Uniones de conducto
+    DB.BuiltInCategory.OST_PipeInsulations: u"04",    # Aislamientos de tubería
+    DB.BuiltInCategory.OST_Walls:           u"09",    # Muros
+    DB.BuiltInCategory.OST_Floors:          u"09",    # Suelos
+}
+
+def assign_partidas_for_category(bic, partida_value):
+    coll = (DB.FilteredElementCollector(doc)
+            .OfCategory(bic)
+            .WhereElementIsNotElementType())
+    elems = list(coll)
+    count_ok = 0
+    for e in elems:
+        if set_param_safe(e, PARAM_PARTIDAS, partida_value):
+            count_ok += 1
+    return len(elems), count_ok
+
+
+# -------------------------------------------------------------
+# 3) HUECOS PARA LÓGICA COMPLEJA DEL DYNAMO
+#    (aquí es donde pegarías el contenido exacto de tus Python nodes)
+# -------------------------------------------------------------
+
+def etiquetar_conductos_codigo_presto():
+    """Replica el Python node de Dynamo que etiqueta conductos por nombre de tipo."""
+    palabras_clave = {
+        u"condensador": u"COND.EXT.COND",
+        u"turbina": u"COND.EXT.TURB",
+        u"gascooler": u"COND.EXT.GASCOOLER",
+    }
+
+    ducts = list(
+        DB.FilteredElementCollector(doc)
+        .OfCategory(DB.BuiltInCategory.OST_DuctCurves)
+        .WhereElementIsNotElementType()
+    )
+
+    ducts_con_codigo = 0
+    for duct in ducts:
         try:
-            storage = param.StorageType
-            if storage == DB.StorageType.String:
-                param.Set(str(pot_valor))
-            elif storage == DB.StorageType.Double:
-                # Revit almacena los valores de potencia (Carga de refrigeración) en unidades
-                # internas (sistema Imperial). Si pasamos el número directamente sin convertir, 
-                # Revit lo toma como unidad interna y en la interfaz (W) se ve dividido (ej: 242 W).
-                # Para replicar el comportamiento de "escribir a mano en UI", convertimos explícitamente
-                # el valor de Vatios (W) a la unidad interna antes de inyectarlo en la base de datos.
-                raw = float(pot_valor)
-                
-                # Fallback matemático exacto (1 W = ~10.7639 Unidades Internas de Revit)
-                internal_val = raw * ((1.0 / 0.3048) ** 2)
-                
+            dtype = doc.GetElement(duct.GetTypeId())
+            nombre_tipo = u""
+            if dtype:
                 try:
-                    if hasattr(DB, 'UnitTypeId') and hasattr(DB.UnitTypeId, 'Watts'):
-                        internal_val = DB.UnitUtils.ConvertToInternalUnits(raw, DB.UnitTypeId.Watts)
-                    elif hasattr(DB, 'DisplayUnitType') and hasattr(DB.DisplayUnitType, 'DUT_WATTS'):
-                        internal_val = DB.UnitUtils.ConvertToInternalUnits(raw, DB.DisplayUnitType.DUT_WATTS)
-                except Exception:
-                    pass
-                
-                param.Set(internal_val)
-            elif storage == DB.StorageType.Integer:
-                param.Set(int(pot_valor))
-            else:
-                errores.append(
-                    "Tipo de dato no soportado para 'Pot.Frigorifica' en equipo `{}`.".format(equipo.Name)
+                    nombre_tipo = dtype.Name or u""
+                except:
+                    nombre_tipo = u""
+
+                if not nombre_tipo:
+                    p_all = dtype.get_Parameter(DB.BuiltInParameter.ALL_MODEL_TYPE_NAME)
+                    if p_all:
+                        nombre_tipo = p_all.AsString() or u""
+
+                if not nombre_tipo:
+                    p_sym = dtype.get_Parameter(DB.BuiltInParameter.SYMBOL_NAME_PARAM)
+                    if p_sym:
+                        nombre_tipo = p_sym.AsString() or u""
+
+            etiqueta = u"SIN ETIQUETA"
+            nombre_tipo_l = (nombre_tipo or u"").lower()
+            for palabra, tag in palabras_clave.items():
+                if palabra in nombre_tipo_l:
+                    etiqueta = tag
+                    break
+
+            if set_param_safe(duct, PARAM_CODIGO, etiqueta):
+                ducts_con_codigo += 1
+        except:
+            continue
+
+    return len(ducts), ducts_con_codigo
+
+
+def cambiar_tipos_de_tuberia_segun_reglas():
+    """
+    Aquí va la lógica de los Python nodes que cambian el tipo de tubería
+    (los que usan BuiltInParameter.ELEM_TYPE_PARAM para asignar pipe_type.Id).
+
+    Igual que arriba:
+    - Copias el contenido de esos Python nodes.
+    - En lugar de IN/OUT, usas colecciones de tuberías desde FilteredElementCollector.
+    - Devuelves cuántas tuberías cambiaste.
+    """
+    # EJEMPLO VACÍO:
+    return 0
+
+
+# -------------------------------------------------------------
+# 4) MAIN
+# -------------------------------------------------------------
+
+def main():
+    t = DB.Transaction(doc, "Antes de mandar a PRESTO (migración base)")
+    t.Start()
+
+    try:
+        resumen_lineas = []
+
+        # 4.1 ZÓCALOS (barridos de muro + parámetros PRESTO)
+        wstype = find_wall_sweep_type_by_name(ZOCALO_TYPE_NAME)
+        walls_coll = (DB.FilteredElementCollector(doc)
+                      .OfCategory(DB.BuiltInCategory.OST_Walls)
+                      .WhereElementIsNotElementType())
+        walls_all = list(walls_coll)
+
+        walls_zoc_2 = [w for w in walls_all if wall_matches_keywords(w, SEARCH_ZOCALO_2)]
+        walls_zoc_1 = [w for w in walls_all if wall_matches_keywords(w, SEARCH_ZOCALO_1)]
+
+        sweeps_zoc_2 = []
+        sweeps_zoc_1 = []
+        sweeps_all   = []
+
+        if wstype:
+            sweeps_zoc_2 = create_wall_sweeps_for_walls(walls_zoc_2, wstype, both_sides=True)
+            sweeps_zoc_1 = create_wall_sweeps_for_walls(walls_zoc_1, wstype, both_sides=False)
+            sweeps_all   = sweeps_zoc_2 + sweeps_zoc_1
+
+            ws_with_presto = set_presto_on_wallsweeps(sweeps_all)
+
+            resumen_lineas.append(
+                u"Zócalos: {} muros zócalo 2 lados, {} muros zócalo 1 lado.".format(
+                    len(walls_zoc_2), len(walls_zoc_1)
                 )
-                continue
-            escritos += 1
-        except Exception as e:
-            errores.append(
-                "Error al escribir en equipo `{}`: {}".format(equipo.Name, str(e))
+            )
+            resumen_lineas.append(
+                u"WallSweeps creados: {} (2 lados), {} (1 lado); {} con PRESTO.".format(
+                    len(sweeps_zoc_2), len(sweeps_zoc_1), ws_with_presto
+                )
+            )
+        else:
+            resumen_lineas.append(
+                u"[AVISO] No se encontró el tipo de zócalo '{}'; no se crearon WallSweeps.".format(
+                    ZOCALO_TYPE_NAME
+                )
             )
 
-# ===========================================================================
-# Resumen final
-# ===========================================================================
+        # 4.2 PARTIDAS PRESTO POR CATEGORÍA
+        total_cat_elems = 0
+        total_cat_asig  = 0
+        for bic, partida in PARTIDAS_BY_CATEGORY.items():
+            n_cat, n_ok = assign_partidas_for_category(bic, partida)
+            total_cat_elems += n_cat
+            total_cat_asig  += n_ok
+            resumen_lineas.append(
+                u"{}: {} elementos, {} con Partidas_PRESTO='{}'".format(
+                    bic.ToString(), n_cat, n_ok, partida
+                )
+            )
 
-output.print_md("---")
-output.print_md("## Resumen")
-output.print_md("- Equipos actualizados correctamente: **{}**".format(escritos))
-output.print_md("- Equipos sin coincidencia en Excel: **{}**".format(len(sin_coincidencia)))
+        # 4.3 LÓGICA COMPLEJA (A COMPLETAR CON LOS PYTHON NODES DE DYNAMO)
+        ducts_tot, ducts_cod = etiquetar_conductos_codigo_presto()
+        if ducts_tot or ducts_cod:
+            resumen_lineas.append(
+                u"Ductos: {} elementos, {} con Codigo_Presto asignado vía script etiquetas.".format(
+                    ducts_tot, ducts_cod
+                )
+            )
 
-if errores:
-    output.print_md("### ❌ Errores:")
-    for err in errores:
-        output.print_md("- " + err)
+        pipes_changed = cambiar_tipos_de_tuberia_segun_reglas()
+        if pipes_changed:
+            resumen_lineas.append(
+                u"Tuberías: {} elementos cambiaron de tipo según reglas de Dynamo.".format(
+                    pipes_changed
+                )
+            )
 
-if escritos > 0:
-    forms.alert(
-        "{} equipo(s) actualizados con 'Pot.Frigorifica' correctamente.".format(escritos)
-    )
-else:
-    forms.alert("No se actualizó ningún equipo. Revisa el log para más detalles.")
+        t.Commit()
+
+    except Exception as e:
+        t.RollBack()
+        msg_err = u"Error en 'Antes de mandar a PRESTO':\n{}".format(e)
+        popup = AutoClosePopup(msg_err, title=u"Antes de mandar a PRESTO", duration_ms=5000)
+        popup.ShowDialog()
+        raise
+
+    # ---------------------------------------------------------
+    # POPUP RESUMEN (AUTO-CIERRE 3 s)
+    # ---------------------------------------------------------
+    msg = u"Antes de mandar a PRESTO\n\n" + u"\n".join(resumen_lineas)
+    popup = AutoClosePopup(msg, title=u"Antes de mandar a PRESTO", duration_ms=3000)
+    popup.ShowDialog()
+
+
+if __name__ == "__main__":
+    main()
