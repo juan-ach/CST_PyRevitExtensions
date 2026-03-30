@@ -1,102 +1,46 @@
 # -*- coding: utf-8 -*-
 
-__title__ = "Tag Segments A/L"
-__author__ = "Juan Achenbach"
-__version__ = "Version: 1.0"
-__doc__ = """Tag each segment between tees at segment half-length midpoint."""
+__title__ = "CST Door Selector"
+__author__ = "Juan Achenbach & Codex"
+__version__ = "Version: 1.1"
+__doc__ = """Selector visual de tipos para la familia de puertas CST_Puerta_1hoja_V31."""
 
-import sys
-import unicodedata
+import codecs
+import json
+import os
+import re
 
 import clr
 
-clr.AddReference("PresentationFramework")
-clr.AddReference("PresentationCore")
-clr.AddReference("WindowsBase")
+clr.AddReference("RevitAPI")
+clr.AddReference("RevitAPIUI")
+clr.AddReference("System.Windows.Forms")
+clr.AddReference("System.Drawing")
 
-from System.Windows import (
-    HorizontalAlignment,
-    ResizeMode,
-    SizeToContent,
-    Thickness,
-    Window,
-    WindowStartupLocation,
-)
-from System.Windows.Controls import Button as WpfButton
-from System.Windows.Controls import Label as WpfLabel
-from System.Windows.Controls import ListBox as WpfListBox
-from System.Windows.Controls import ListBoxItem as WpfListBoxItem
-from System.Windows.Controls import Orientation as WpfOrientation
-from System.Windows.Controls import StackPanel as WpfStackPanel
-
-from pyrevit import revit
 from Autodesk.Revit.DB import (
     BuiltInCategory,
     BuiltInParameter,
-    ElementId,
-    FamilyInstance,
     FamilySymbol,
     FilteredElementCollector,
-    IndependentTag,
-    LocationCurve,
-    PartType,
-    Reference,
-    TagMode,
-    TagOrientation,
     Transaction,
 )
-from Autodesk.Revit.DB.Plumbing import Pipe
 from Autodesk.Revit.UI import TaskDialog
+from pyrevit import revit
 
-doc = revit.doc
-view = doc.ActiveView
+import System
+from System.Drawing import Color, Font, FontStyle, Point, Size
+from System.Windows.Forms import (
+    Application,
+    Button,
+    CheckBox,
+    ComboBox,
+    ComboBoxStyle,
+    Form,
+    FormBorderStyle,
+    Label,
+    TextBox,
+)
 
-FAMILY_BASE_NAME = u"CST_TAG Diametro Tubería v{}"
-VERSION_MIN = 28
-VERSION_MAX = 40
-TAG_TYPE_NAME = "1.5 DT"
-
-# Offsets from segment midpoint (meters), by tag type and segment orientation in view.
-# Horizontal segment -> use *_H_* ; Vertical segment -> use *_V_*
-# Grouped by orientation and sign so A/L pairs are adjacent.
-# Horizontal PLUS
-A_H_DX_PLUS_M = 0.5
-A_H_DY_PLUS_M = 0.5
-L_H_DX_PLUS_M = 1.6
-L_H_DY_PLUS_M = 1.12
-
-# Horizontal MINUS
-A_H_DX_MINUS_M = 0.5
-A_H_DY_MINUS_M = -0.5
-L_H_DX_MINUS_M = 1.6
-L_H_DY_MINUS_M = 0.875
-
-# Vertical PLUS
-A_V_DX_PLUS_M = 1
-A_V_DY_PLUS_M = 0.5
-L_V_DX_PLUS_M = 1.9
-L_V_DY_PLUS_M = 0.65
-
-# Vertical MINUS
-A_V_DX_MINUS_M = 0.5
-A_V_DY_MINUS_M = 0.5
-L_V_DX_MINUS_M = 1.8
-L_V_DY_MINUS_M = 0.4
-
-# A leader geometry (meters), fully explicit with 2 segments:
-# Segment 1: contact(midpoint) -> elbow
-# Segment 2: elbow -> head(tag position)
-# Horizontal segment in view:
-A_H_S1_DX_M = 0.5
-A_H_S1_DY_M = 0.5
-A_H_S2_DX_M = 0.5
-A_H_S2_DY_M = 0.5
-
-# Vertical segment in view:
-A_V_S1_DX_M = 0.5
-A_V_S1_DY_M = 0.0
-A_V_S2_DX_M = 0.5
-A_V_S2_DY_M = 0.5
 
 try:
     text_type = unicode
@@ -104,714 +48,530 @@ except NameError:
     text_type = str
 
 
-# Offsets base are calibrated for 1:200.
-SCALE_OPTIONS_ORDERED = ["1:50", "1:75", "1:100", "1:125", "1:150", "1:200", "1:500"]
-SCALE_VALUES = {
-    "1:50": 50,
-    "1:75": 75,
-    "1:100": 100,
-    "1:125": 125,
-    "1:150": 150,
-    "1:200": 200,
-    "1:500": 500,
+doc = revit.doc
+uidoc = revit.uidoc
+
+FAMILY_NAME_PATTERN = re.compile(r"^CST_Puerta_1hoja_V(\d+)$")
+MIN_FAMILY_VERSION = 31
+FAMILY_DISPLAY_NAME = u"CST_Puerta_1hoja_Vx (x >= 31)"
+WINDOW_TITLE = u"CST Door Selector"
+STATE_FILE = os.path.join(os.path.dirname(__file__), "last_selection.json")
+
+CLIENTE_OPTIONS = [
+    (u"Dinosol", u"Dinosol"),
+    (u"Bon Preu", u"Bon Preu"),
+]
+
+TIPO_OPTIONS = [
+    (u"Pivotante", u"PP"),
+    (u"Corredera", u"PC"),
+    (u"Vaiv\u00e9n", u"PV"),
+]
+
+SERVICIO_OPTIONS = [
+    (u"Positivo", u"CP"),
+    (u"Negativo", u"CN"),
+]
+
+ANCHO_OPTIONS = [
+    (u"0.8", u"800"),
+    (u"0.9", u"900"),
+    (u"1", u"1000"),
+    (u"1.1", u"1100"),
+    (u"1.2", u"1200"),
+    (u"1.3", u"1300"),
+    (u"1.4", u"1400"),
+    (u"1.5", u"1500"),
+    (u"1.6", u"1600"),
+]
+
+ALTO_OPTIONS = [
+    (u"1.9", u"1900"),
+    (u"2.0", u"2000"),
+    (u"2.1", u"2100"),
+]
+
+APERTURA_OPTIONS = [
+    (u"Derecha", u"ADE"),
+    (u"Izquierda", u"AIZ"),
+]
+
+ESPESOR_BY_CLIENTE_SERVICIO = {
+    (u"Bon Preu", u"Negativo"): u"150",
+    (u"Bon Preu", u"Positivo"): u"100",
+    (u"Dinosol", u"Negativo"): u"120",
+    (u"Dinosol", u"Positivo"): u"80",
 }
-# Optional correction per scale on top of (scale/200).
-# Keep 1.0 for pure proportional behavior.
-SCALE_CORRECTION = {
-    "1:50": 1.0,
-    "1:75": 1.0,
-    "1:100": 1.0,
-    "1:125": 1.0,
-    "1:150": 1.0,
-    "1:200": 1.0,
-    "1:500": 1.0,
-}
-# Small extra shift for L tags to keep visual pairing with A in non-1:200 scales.
-# Values are in meters and applied in view axes (+X right, +Y up).
-L_ALIGNMENT_NUDGE_BY_SCALE_M = {
-    "1:50": (0.020, 0.015),
-    "1:75": (0.030, 0.020),
-    "1:100": (0.040, 0.025),
-    "1:125": (0.050, 0.030),
-    "1:150": (0.060, 0.035),
-    "1:200": (0.000, 0.000),
-    "1:500": (0.000, 0.000),
+
+TIPO_MAP = dict(TIPO_OPTIONS)
+SERVICIO_MAP = dict(SERVICIO_OPTIONS)
+ANCHO_MAP = dict(ANCHO_OPTIONS)
+ALTO_MAP = dict(ALTO_OPTIONS)
+APERTURA_MAP = dict(APERTURA_OPTIONS)
+
+DEFAULT_STATE = {
+    "cliente": u"Dinosol",
+    "servicio": u"Positivo",
+    "tipo": u"Pivotante",
+    "ancho": u"0.8",
+    "alto": u"1.9",
+    "apertura": u"Derecha",
 }
 
-
-class ScalePickerWindow(Window):
-    def __init__(self, default_scale_str):
-        self.Title = "Tag Segments A/L"
-        self.Width = 280
-        self.SizeToContent = SizeToContent.Height
-        self.ResizeMode = ResizeMode.NoResize
-        self.WindowStartupLocation = WindowStartupLocation.CenterScreen
-        self.selected = None
-
-        root = WpfStackPanel()
-        root.Margin = Thickness(16)
-
-        lbl = WpfLabel()
-        lbl.Content = "Escala de offsets (base 1:200):"
-        lbl.Margin = Thickness(0, 0, 0, 6)
-        root.Children.Add(lbl)
-
-        self.listbox = WpfListBox()
-        self.listbox.Margin = Thickness(0, 0, 0, 12)
-        for s in SCALE_OPTIONS_ORDERED:
-            item = WpfListBoxItem()
-            item.Content = s
-            self.listbox.Items.Add(item)
-
-        default_index = 5  # 1:200
-        if default_scale_str in SCALE_OPTIONS_ORDERED:
-            default_index = SCALE_OPTIONS_ORDERED.index(default_scale_str)
-        self.listbox.SelectedIndex = default_index
-        root.Children.Add(self.listbox)
-
-        btn_panel = WpfStackPanel()
-        btn_panel.Orientation = WpfOrientation.Horizontal
-        btn_panel.HorizontalAlignment = HorizontalAlignment.Right
-
-        btn_ok = WpfButton()
-        btn_ok.Content = "OK"
-        btn_ok.Width = 80
-        btn_ok.Margin = Thickness(0, 0, 8, 0)
-        btn_ok.Click += self.on_ok
-        btn_panel.Children.Add(btn_ok)
-
-        btn_cancel = WpfButton()
-        btn_cancel.Content = "Cancelar"
-        btn_cancel.Width = 80
-        btn_cancel.Click += self.on_cancel
-        btn_panel.Children.Add(btn_cancel)
-
-        root.Children.Add(btn_panel)
-        self.Content = root
-
-    def on_ok(self, sender, args):
-        if self.listbox.SelectedItem:
-            self.selected = self.listbox.SelectedItem.Content
-        self.DialogResult = True
-        self.Close()
-
-    def on_cancel(self, sender, args):
-        self.DialogResult = False
-        self.Close()
+OK_COLOR = Color.FromArgb(39, 174, 96)
+ERROR_COLOR = Color.FromArgb(192, 57, 43)
+TEXT_COLOR = Color.FromArgb(45, 45, 45)
 
 
-def get_scale_factor_from_popup(default_scale_str):
-    picker = ScalePickerWindow(default_scale_str)
-    result = picker.ShowDialog()
-    if not result or not picker.selected:
-        raise SystemExit
-    return picker.selected, float(SCALE_VALUES[picker.selected]) / 200.0
-
-
-def normalize_text(value):
-    if not value:
+def as_text(value):
+    if value is None:
         return u""
-    txt = value if isinstance(value, text_type) else text_type(value)
-    txt = unicodedata.normalize("NFKD", txt)
-    txt = u"".join([c for c in txt if not unicodedata.combining(c)])
-    return txt.lower().strip()
+    return text_type(value)
+
+
+def load_last_selection():
+    state = DEFAULT_STATE.copy()
+
+    if not os.path.exists(STATE_FILE):
+        return state
+
+    try:
+        with codecs.open(STATE_FILE, "r", "utf-8") as state_file:
+            raw_data = json.load(state_file)
+
+        for key in state.keys():
+            value = raw_data.get(key)
+            if value:
+                state[key] = as_text(value)
+    except Exception:
+        pass
+
+    return state
+
+
+def save_last_selection(state):
+    try:
+        with codecs.open(STATE_FILE, "w", "utf-8") as state_file:
+            state_file.write(json.dumps(state, ensure_ascii=False, indent=2))
+    except Exception:
+        pass
 
 
 def get_symbol_type_name(symbol):
-    p = symbol.get_Parameter(BuiltInParameter.SYMBOL_NAME_PARAM)
-    if p:
-        return p.AsString() or ""
-    return ""
+    param = symbol.get_Parameter(BuiltInParameter.SYMBOL_NAME_PARAM)
+    if param:
+        type_name = param.AsString()
+        if type_name:
+            return as_text(type_name).strip()
+
+    name_attr = getattr(symbol, "Name", None)
+    if name_attr:
+        return as_text(name_attr).strip()
+
+    return u""
 
 
-def find_tag_symbol():
-    symbols = list(
-        FilteredElementCollector(doc)
-        .OfClass(FamilySymbol)
-        .OfCategory(BuiltInCategory.OST_PipeTags)
-    )
-    type_norm = normalize_text(TAG_TYPE_NAME)
-
-    for v in range(VERSION_MAX, VERSION_MIN - 1, -1):
-        family_name = FAMILY_BASE_NAME.format(v)
-        fam_norm = normalize_text(family_name)
-        for s in symbols:
-            if normalize_text(s.FamilyName) != fam_norm:
-                continue
-            if normalize_text(get_symbol_type_name(s)) == type_norm:
-                return s, family_name, v
-
-    return None, None, None
-
-
-def is_pipe_fitting(elem):
-    return (
-        isinstance(elem, FamilyInstance)
-        and elem.Category
-        and elem.Category.Id.IntegerValue == int(BuiltInCategory.OST_PipeFitting)
-    )
-
-
-def is_tee_fitting(elem):
-    if not is_pipe_fitting(elem):
-        return False
-    try:
-        mep = getattr(elem, "MEPModel", None)
-        if mep and hasattr(mep, "PartType"):
-            return mep.PartType == PartType.Tee
-    except:
-        pass
-    return False
-
-
-def connected_pipes_through_non_tee(pipe):
-    neighbors = set()
-    cm = getattr(pipe, "ConnectorManager", None)
-    if not cm:
-        return neighbors
-
-    for c in cm.Connectors:
-        for r in c.AllRefs:
-            owner = r.Owner
-            if owner is None:
-                continue
-
-            if isinstance(owner, Pipe):
-                if owner.Id != pipe.Id:
-                    neighbors.add(owner)
-                continue
-
-            if is_pipe_fitting(owner):
-                if is_tee_fitting(owner):
-                    continue
-                fit_cm = getattr(getattr(owner, "MEPModel", None), "ConnectorManager", None)
-                if not fit_cm:
-                    continue
-                for fc in fit_cm.Connectors:
-                    for rr in fc.AllRefs:
-                        other = rr.Owner
-                        if isinstance(other, Pipe) and other.Id != pipe.Id:
-                            neighbors.add(other)
-    return neighbors
-
-
-def build_segments(pipes):
-    by_id = dict((p.Id.IntegerValue, p) for p in pipes)
-    visited = set()
-    segments = []
-
-    for pid in by_id.keys():
-        if pid in visited:
-            continue
-
-        stack = [by_id[pid]]
-        segment = []
-        while stack:
-            p = stack.pop()
-            pkey = p.Id.IntegerValue
-            if pkey in visited:
-                continue
-            visited.add(pkey)
-            segment.append(p)
-
-            for n in connected_pipes_through_non_tee(p):
-                nkey = n.Id.IntegerValue
-                if nkey in by_id and nkey not in visited:
-                    stack.append(n)
-
-        if segment:
-            segments.append(segment)
-
-    return segments
-
-
-def get_pipe_curve(pipe):
-    loc = pipe.Location
-    if isinstance(loc, LocationCurve):
-        return loc.Curve
-    return None
-
-
-def get_pipe_length(pipe):
-    c = get_pipe_curve(pipe)
-    if c is not None:
-        return c.Length
-    return 0.0
-
-
-def get_tipo_sistema(pipe):
-    p = pipe.LookupParameter("Tipo de sistema")
-    if p:
-        try:
-            s = p.AsString()
-            if s:
-                return s
-        except:
-            pass
-        try:
-            s = p.AsValueString()
-            if s:
-                return s
-        except:
-            pass
-    return ""
-
-
-def get_connected_pipes_from_connector(connector):
-    pipes = set()
-    for r in connector.AllRefs:
-        owner = r.Owner
-        if owner is None:
-            continue
-
-        if isinstance(owner, Pipe):
-            pipes.add(owner)
-            continue
-
-        if is_pipe_fitting(owner):
-            fit_cm = getattr(getattr(owner, "MEPModel", None), "ConnectorManager", None)
-            if not fit_cm:
-                continue
-            for fc in fit_cm.Connectors:
-                for rr in fc.AllRefs:
-                    other = rr.Owner
-                    if isinstance(other, Pipe):
-                        pipes.add(other)
-
-    return pipes
-
-
-def get_tagged_pipe_ids_in_view():
-    tagged = set()
-    tags = (
-        FilteredElementCollector(doc, view.Id)
-        .OfCategory(BuiltInCategory.OST_PipeTags)
-        .WhereElementIsNotElementType()
-        .ToElements()
-    )
-
-    for tag in tags:
-        ids = None
-        try:
-            ids = tag.GetTaggedLocalElementIds()
-        except:
-            try:
-                ids = tag.GetTaggedElementIds()
-            except:
-                ids = None
-
-        if not ids:
-            continue
-
-        for tid in ids:
-            try:
-                if tid != ElementId.InvalidElementId:
-                    tagged.add(tid.IntegerValue)
-            except:
-                pass
-
-    return tagged
-
-
-def get_connection_point_on_pipe(pipe, other_pipe):
-    cm = getattr(pipe, "ConnectorManager", None)
-    if not cm:
+def get_supported_family_version(family_name):
+    """Devuelve la version soportada de la familia o None si no aplica."""
+    match = FAMILY_NAME_PATTERN.match(as_text(family_name).strip())
+    if not match:
         return None
 
-    for c in cm.Connectors:
-        for r in c.AllRefs:
-            owner = r.Owner
-            if owner is None:
-                continue
+    version = int(match.group(1))
+    if version < MIN_FAMILY_VERSION:
+        return None
 
-            if isinstance(owner, Pipe) and owner.Id == other_pipe.Id:
-                return c.Origin
-
-            if is_pipe_fitting(owner) and (not is_tee_fitting(owner)):
-                fit_cm = getattr(getattr(owner, "MEPModel", None), "ConnectorManager", None)
-                if not fit_cm:
-                    continue
-                connected_to_other = False
-                for fc in fit_cm.Connectors:
-                    for rr in fc.AllRefs:
-                        oo = rr.Owner
-                        if isinstance(oo, Pipe) and oo.Id == other_pipe.Id:
-                            connected_to_other = True
-                            break
-                    if connected_to_other:
-                        break
-                if connected_to_other:
-                    return c.Origin
-
-    return None
+    return version
 
 
-def order_segment_pipes(segment):
-    by_id = dict((p.Id.IntegerValue, p) for p in segment)
-    ids = set(by_id.keys())
+def collect_door_symbols():
+    symbols_by_type_name = {}
 
-    adjacency = {}
-    for p in segment:
-        pid = p.Id.IntegerValue
-        adjacency[pid] = set()
-        for n in connected_pipes_through_non_tee(p):
-            nid = n.Id.IntegerValue
-            if nid in ids:
-                adjacency[pid].add(nid)
-
-    endpoints = [pid for pid in ids if len(adjacency.get(pid, [])) <= 1]
-    if endpoints:
-        start = endpoints[0]
-    else:
-        start = next(iter(ids))
-
-    ordered_ids = []
-    visited = set()
-    current = start
-    prev = None
-
-    while True:
-        if current in visited:
-            remaining = [pid for pid in ids if pid not in visited]
-            if not remaining:
-                break
-            current = remaining[0]
-            prev = None
-            continue
-
-        ordered_ids.append(current)
-        visited.add(current)
-
-        neighbors = [nid for nid in adjacency.get(current, []) if nid != prev and nid not in visited]
-        if neighbors:
-            nxt = neighbors[0]
-            prev = current
-            current = nxt
-        else:
-            remaining = [pid for pid in ids if pid not in visited]
-            if not remaining:
-                break
-            current = remaining[0]
-            prev = None
-
-    return [by_id[pid] for pid in ordered_ids]
-
-
-def get_segment_anchor_and_midpoint(segment):
-    ordered = order_segment_pipes(segment)
-    if not ordered:
-        return None, None
-
-    lengths = [get_pipe_length(p) for p in ordered]
-    total = sum(lengths)
-    if total <= 0.0:
-        return None, None
-
-    target = total * 0.5
-    cumulative = 0.0
-
-    for idx, p in enumerate(ordered):
-        plen = lengths[idx]
-        if plen <= 0.0:
-            cumulative += plen
-            continue
-
-        if (target <= cumulative + plen) or (idx == len(ordered) - 1):
-            local = (target - cumulative) / plen
-            if local < 0.0:
-                local = 0.0
-            if local > 1.0:
-                local = 1.0
-
-            curve = get_pipe_curve(p)
-            if curve is None:
-                return None, None
-
-            # Orient local parameter using previous pipe connection when possible.
-            param = local
-            if idx > 0:
-                prev_pipe = ordered[idx - 1]
-                conn_pt = get_connection_point_on_pipe(p, prev_pipe)
-                if conn_pt is not None:
-                    e0 = curve.GetEndPoint(0)
-                    e1 = curve.GetEndPoint(1)
-                    if conn_pt.DistanceTo(e1) < conn_pt.DistanceTo(e0):
-                        param = 1.0 - local
-
-            return p, curve.Evaluate(param, True)
-
-        cumulative += plen
-
-    return None, None
-
-
-if view is None:
-    raise Exception("No active view.")
-
-view_scale = getattr(view, "Scale", 200) or 200
-try:
-    default_scale_str = "1:{}".format(int(view_scale))
-except:
-    default_scale_str = "1:200"
-if default_scale_str not in SCALE_VALUES:
-    default_scale_str = "1:200"
-
-selected_scale_str, scale_factor = get_scale_factor_from_popup(default_scale_str)
-scale_factor = scale_factor * SCALE_CORRECTION.get(selected_scale_str, 1.0)
-# Keep A and L synchronized across scales.
-leader_scale_factor = scale_factor
-l_nudge_dx_m, l_nudge_dy_m = L_ALIGNMENT_NUDGE_BY_SCALE_M.get(selected_scale_str, (0.0, 0.0))
-L_NUDGE_DX = l_nudge_dx_m * 3.28084
-L_NUDGE_DY = l_nudge_dy_m * 3.28084
-view_right = view.RightDirection
-view_up = view.UpDirection
-
-# Horizontal PLUS
-A_H_DX_PLUS = A_H_DX_PLUS_M * 3.28084 * scale_factor
-A_H_DY_PLUS = A_H_DY_PLUS_M * 3.28084 * scale_factor
-L_H_DX_PLUS = L_H_DX_PLUS_M * 3.28084 * leader_scale_factor
-L_H_DY_PLUS = L_H_DY_PLUS_M * 3.28084 * leader_scale_factor
-
-# Horizontal MINUS
-A_H_DX_MINUS = A_H_DX_MINUS_M * 3.28084 * scale_factor
-A_H_DY_MINUS = A_H_DY_MINUS_M * 3.28084 * scale_factor
-L_H_DX_MINUS = L_H_DX_MINUS_M * 3.28084 * leader_scale_factor
-L_H_DY_MINUS = L_H_DY_MINUS_M * 3.28084 * leader_scale_factor
-
-# Vertical PLUS
-A_V_DX_PLUS = A_V_DX_PLUS_M * 3.28084 * scale_factor
-A_V_DY_PLUS = A_V_DY_PLUS_M * 3.28084 * scale_factor
-L_V_DX_PLUS = L_V_DX_PLUS_M * 3.28084 * leader_scale_factor
-L_V_DY_PLUS = L_V_DY_PLUS_M * 3.28084 * leader_scale_factor
-
-# Vertical MINUS
-A_V_DX_MINUS = A_V_DX_MINUS_M * 3.28084 * scale_factor
-A_V_DY_MINUS = A_V_DY_MINUS_M * 3.28084 * scale_factor
-L_V_DX_MINUS = L_V_DX_MINUS_M * 3.28084 * leader_scale_factor
-L_V_DY_MINUS = L_V_DY_MINUS_M * 3.28084 * leader_scale_factor
-
-A_H_S1_DX = A_H_S1_DX_M * 3.28084 * leader_scale_factor
-A_H_S1_DY = A_H_S1_DY_M * 3.28084 * leader_scale_factor
-A_H_S2_DX = A_H_S2_DX_M * 3.28084 * leader_scale_factor
-A_H_S2_DY = A_H_S2_DY_M * 3.28084 * leader_scale_factor
-
-A_V_S1_DX = A_V_S1_DX_M * 3.28084 * leader_scale_factor
-A_V_S1_DY = A_V_S1_DY_M * 3.28084 * leader_scale_factor
-A_V_S2_DX = A_V_S2_DX_M * 3.28084 * leader_scale_factor
-A_V_S2_DY = A_V_S2_DY_M * 3.28084 * leader_scale_factor
-
-
-def offset_in_view(point, dx_right, dy_up):
-    return point + view_right.Multiply(dx_right) + view_up.Multiply(dy_up)
-
-
-def is_segment_horizontal_in_view(pipe):
-    c = get_pipe_curve(pipe)
-    if c is None:
-        return True
-    try:
-        e0 = c.GetEndPoint(0)
-        e1 = c.GetEndPoint(1)
-        d = e1 - e0
-        if d.GetLength() <= 1e-9:
-            return True
-        d = d.Normalize()
-        right_comp = abs(d.DotProduct(view_right))
-        up_comp = abs(d.DotProduct(view_up))
-        return right_comp >= up_comp
-    except:
-        return True
-
-
-def get_head_offset_for_pipe(pipe, tag_kind, system_text):
-    """
-    Return (dx_right, dy_up) from midpoint based on:
-    - tag_kind: 'A' or 'L'
-    - segment orientation in view: horizontal or vertical
-    """
-    is_h = is_segment_horizontal_in_view(pipe)
-    is_minus = ("a1-" in system_text) or ("l2" in system_text) or ("-" in system_text)
-
-    if is_h:
-        if is_minus:
-            if tag_kind == "A":
-                return (A_H_DX_MINUS, A_H_DY_MINUS)
-            return (L_H_DX_MINUS + L_NUDGE_DX, L_H_DY_MINUS + L_NUDGE_DY)
-        if tag_kind == "A":
-            return (A_H_DX_PLUS, A_H_DY_PLUS)
-        return (L_H_DX_PLUS + L_NUDGE_DX, L_H_DY_PLUS + L_NUDGE_DY)
-
-    if is_minus:
-        if tag_kind == "A":
-            return (A_V_DX_MINUS, A_V_DY_MINUS)
-        return (L_V_DX_MINUS + L_NUDGE_DX, L_V_DY_MINUS + L_NUDGE_DY)
-    if tag_kind == "A":
-        return (A_V_DX_PLUS, A_V_DY_PLUS)
-    return (L_V_DX_PLUS + L_NUDGE_DX, L_V_DY_PLUS + L_NUDGE_DY)
-
-
-def force_a_tag_geometry(tag, tag_ref, anchor_pipe, midpoint, system_text):
-    """Force A-tag geometry with explicit 2 leader segment lengths."""
-    if is_segment_horizontal_in_view(anchor_pipe):
-        # Segment 1: contact -> elbow
-        elbow = offset_in_view(midpoint, A_H_S1_DX, A_H_S1_DY)
-        # Segment 2: elbow -> head
-        head = offset_in_view(elbow, A_H_S2_DX, A_H_S2_DY)
-    else:
-        # Segment 1: contact -> elbow
-        elbow = offset_in_view(midpoint, A_V_S1_DX, A_V_S1_DY)
-        # Segment 2: elbow -> head
-        head = offset_in_view(elbow, A_V_S2_DX, A_V_S2_DY)
-
-    try:
-        tag.TagHeadPosition = head
-    except:
-        pass
-
-    # Try API variants across Revit versions.
-    try:
-        tag.SetLeaderEnd(tag_ref, midpoint)
-    except:
-        try:
-            tag.LeaderEnd = midpoint
-        except:
-            pass
-
-    try:
-        tag.SetLeaderElbow(tag_ref, elbow)
-    except:
-        try:
-            tag.LeaderElbow = elbow
-        except:
-            pass
-
-
-tag_symbol, family_used, version_used = find_tag_symbol()
-if not tag_symbol:
-    raise Exception(
-        "No se encontro la etiqueta '{}' en CST_TAG Diametro Tuberia v28-v40.".format(TAG_TYPE_NAME)
+    collector = (
+        FilteredElementCollector(doc)
+        .OfClass(FamilySymbol)
+        .OfCategory(BuiltInCategory.OST_Doors)
     )
 
-pipes = list(
-    FilteredElementCollector(doc, view.Id)
-    .OfClass(Pipe)
-    .WhereElementIsNotElementType()
-    .ToElements()
-)
-if not pipes:
-    TaskDialog.Show("Info", "No hay tuberias en la vista activa.")
-    raise SystemExit
+    for symbol in collector:
+        family_name = as_text(getattr(symbol, "FamilyName", u"")).strip()
+        family_version = get_supported_family_version(family_name)
+        if family_version is None:
+            continue
 
-segments = build_segments(pipes)
-tagged_pipe_ids = get_tagged_pipe_ids_in_view()
+        type_name = get_symbol_type_name(symbol)
+        if type_name:
+            # Si existen varias versiones cargadas, se prioriza la mas reciente.
+            current_entry = symbols_by_type_name.get(type_name)
+            if current_entry is None or family_version > current_entry["version"]:
+                symbols_by_type_name[type_name] = {
+                    "symbol": symbol,
+                    "version": family_version,
+                    "family_name": family_name,
+                }
 
-pipe_to_segment = {}
-for i, seg in enumerate(segments):
-    for p in seg:
-        pipe_to_segment[p.Id.IntegerValue] = i
+    return dict((type_name, data["symbol"]) for type_name, data in symbols_by_type_name.items())
 
-# Exclude terminal segments directly connected to mechanical equipment
-terminal_segment_ids = set()
-equipos = list(
-    FilteredElementCollector(doc, view.Id)
-    .OfCategory(BuiltInCategory.OST_MechanicalEquipment)
-    .WhereElementIsNotElementType()
-    .ToElements()
-)
-for eq in equipos:
-    mepmodel = getattr(eq, "MEPModel", None)
-    cm = getattr(mepmodel, "ConnectorManager", None)
-    if not cm:
-        continue
-    for c in cm.Connectors:
-        for p in get_connected_pipes_from_connector(c):
-            sid = pipe_to_segment.get(p.Id.IntegerValue)
-            if sid is not None:
-                terminal_segment_ids.add(sid)
 
-created = 0
-skipped_terminal = 0
-skipped_tagged = 0
-skipped_no_midpoint = 0
-skipped_no_system = 0
-skipped_error = 0
+def get_espesor_code(cliente_label, servicio_label):
+    return ESPESOR_BY_CLIENTE_SERVICIO.get((cliente_label, servicio_label), u"")
 
-t = Transaction(doc, "Tag segments between tees (A/L rules)")
-t.Start()
 
-if not tag_symbol.IsActive:
-    tag_symbol.Activate()
-    doc.Regenerate()
+def build_type_code(cliente_label, tipo_label, servicio_label, ancho_label, alto_label, apertura_label):
+    if not all([cliente_label, tipo_label, servicio_label, ancho_label, alto_label, apertura_label]):
+        return u""
 
-for i, seg in enumerate(segments):
-    if i in terminal_segment_ids:
-        skipped_terminal += 1
-        continue
+    espesor_code = get_espesor_code(cliente_label, servicio_label)
+    if not espesor_code:
+        return u""
 
-    seg_ids = [p.Id.IntegerValue for p in seg]
-    if any((sid in tagged_pipe_ids) for sid in seg_ids):
-        skipped_tagged += 1
-        continue
+    tipologia_code = TIPO_MAP[tipo_label] + SERVICIO_MAP[servicio_label]
 
-    anchor_pipe, midpoint = get_segment_anchor_and_midpoint(seg)
-    if (anchor_pipe is None) or (midpoint is None):
-        skipped_no_midpoint += 1
-        continue
+    return u"{}_{}_{}x{}_{}".format(
+        tipologia_code,
+        espesor_code,
+        ANCHO_MAP[ancho_label],
+        ALTO_MAP[alto_label],
+        APERTURA_MAP[apertura_label],
+    )
 
-    tipo = normalize_text(get_tipo_sistema(anchor_pipe))
-    has_a = "a" in tipo
-    has_l = "l" in tipo
 
-    if not (has_a or has_l):
-        skipped_no_system += 1
-        continue
+class DoorSelectorForm(Form):
+    def __init__(self, symbols_by_type_name):
+        Form.__init__(self)
+        self.symbols_by_type_name = symbols_by_type_name
+        self._updating_checkbox_group = False
+        self._is_loading_defaults = True
 
-    # Rule: A -> with leader, L -> without leader.
-    # If both appear in text, A priority applies (leader=True).
-    has_leader = has_a
+        self.Text = WINDOW_TITLE
+        self.Width = 1180
+        self.Height = 305
+        self.BackColor = Color.White
+        self.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen
+        self.FormBorderStyle = FormBorderStyle.FixedDialog
+        self.MaximizeBox = False
+        self.MinimizeBox = False
+        self.ControlBox = True
+        self.TopMost = True
+        self.Font = Font("Segoe UI", 10)
 
-    try:
-        tag_ref = Reference(anchor_pipe)
+        self._build_ui()
+        self._wire_events()
+        self._set_defaults()
+        self._is_loading_defaults = False
+        self.update_preview()
 
-        tag = IndependentTag.Create(
-            doc,
-            view.Id,
-            tag_ref,
-            has_leader,
-            TagMode.TM_ADDBY_CATEGORY,
-            TagOrientation.Horizontal,
-            midpoint,
-        )
-        tag.ChangeTypeId(tag_symbol.Id)
+    def _build_ui(self):
+        title = Label()
+        title.Text = WINDOW_TITLE
+        title.Location = Point(18, 16)
+        title.AutoSize = True
+        title.ForeColor = TEXT_COLOR
+        title.Font = Font("Segoe UI", 20, FontStyle.Regular)
+        self.Controls.Add(title)
 
-        # Keep tags off the segment line in view space.
-        if has_leader:
-            force_a_tag_geometry(tag, tag_ref, anchor_pipe, midpoint, tipo)
+        self._add_header(u"Cliente", 20, 72)
+        self._add_header(u"Servicio", 155, 72)
+        self._add_header(u"Tipo", 285, 72)
+        self._add_header(u"Espesor", 435, 72)
+        self._add_header(u"Ancho", 545, 72)
+        self._add_header(u"Alto", 695, 72)
+        self._add_header(u"Apertura", 845, 72)
+
+        self.cliente_dinosol = self._add_checkbox(u"Dinosol", 22, 108, True)
+        self.cliente_bon_preu = self._add_checkbox(u"Bon Preu", 22, 138, False)
+
+        self.servicio_positivo = self._add_checkbox(u"Positivo", 157, 108, True)
+        self.servicio_negativo = self._add_checkbox(u"Negativo", 157, 138, False)
+
+        self.tipo_combo = self._add_combo([label for label, _code in TIPO_OPTIONS], 278, 104, 118)
+
+        self.espesor_box = TextBox()
+        self.espesor_box.Location = Point(428, 104)
+        self.espesor_box.Size = Size(92, 28)
+        self.espesor_box.ReadOnly = True
+        self.espesor_box.BackColor = Color.White
+        self.espesor_box.Font = Font("Consolas", 11, FontStyle.Regular)
+        self.Controls.Add(self.espesor_box)
+
+        self.ancho_combo = self._add_combo([label for label, _code in ANCHO_OPTIONS], 538, 104, 118)
+
+        self.alto_combo = self._add_combo([label for label, _code in ALTO_OPTIONS], 688, 104, 118)
+
+        self.apertura_derecha = self._add_checkbox(u"Derecha", 847, 108, True)
+        self.apertura_izquierda = self._add_checkbox(u"Izquierda", 847, 138, False)
+
+        self.select_button = Button()
+        self.select_button.Text = u"Select"
+        self.select_button.Location = Point(1010, 102)
+        self.select_button.Size = Size(140, 64)
+        self.select_button.Font = Font("Segoe UI", 16, FontStyle.Regular)
+        self.Controls.Add(self.select_button)
+        self.AcceptButton = self.select_button
+
+        preview_label = Label()
+        preview_label.Text = u"Codigo generado"
+        preview_label.Location = Point(20, 196)
+        preview_label.AutoSize = True
+        preview_label.ForeColor = TEXT_COLOR
+        preview_label.Font = Font("Segoe UI", 10, FontStyle.Bold)
+        self.Controls.Add(preview_label)
+
+        self.preview_box = TextBox()
+        self.preview_box.Location = Point(20, 220)
+        self.preview_box.Size = Size(810, 28)
+        self.preview_box.ReadOnly = True
+        self.preview_box.BackColor = Color.White
+        self.preview_box.Font = Font("Consolas", 11, FontStyle.Regular)
+        self.Controls.Add(self.preview_box)
+
+        self.status_label = Label()
+        self.status_label.Location = Point(850, 222)
+        self.status_label.AutoSize = True
+        self.status_label.ForeColor = TEXT_COLOR
+        self.status_label.Font = Font("Segoe UI", 10, FontStyle.Regular)
+        self.Controls.Add(self.status_label)
+
+    def _wire_events(self):
+        self.FormClosing += self.on_form_closing
+
+        self.cliente_dinosol.CheckedChanged += self.on_cliente_changed
+        self.cliente_bon_preu.CheckedChanged += self.on_cliente_changed
+        self.servicio_positivo.CheckedChanged += self.on_servicio_changed
+        self.servicio_negativo.CheckedChanged += self.on_servicio_changed
+        self.apertura_derecha.CheckedChanged += self.on_apertura_changed
+        self.apertura_izquierda.CheckedChanged += self.on_apertura_changed
+
+        self.tipo_combo.SelectedIndexChanged += self.on_any_value_changed
+        self.ancho_combo.SelectedIndexChanged += self.on_any_value_changed
+        self.alto_combo.SelectedIndexChanged += self.on_any_value_changed
+
+        self.select_button.Click += self.on_select_click
+
+    def _set_defaults(self):
+        state = load_last_selection()
+
+        self._set_checkbox_pair(state.get("cliente"), u"Dinosol", self.cliente_dinosol, u"Bon Preu", self.cliente_bon_preu)
+        self._set_checkbox_pair(state.get("servicio"), u"Positivo", self.servicio_positivo, u"Negativo", self.servicio_negativo)
+        self._set_checkbox_pair(state.get("apertura"), u"Derecha", self.apertura_derecha, u"Izquierda", self.apertura_izquierda)
+
+        self._set_combo_selection(self.tipo_combo, state.get("tipo"), 0)
+        self._set_combo_selection(self.ancho_combo, state.get("ancho"), 0)
+        self._set_combo_selection(self.alto_combo, state.get("alto"), 0)
+
+    def _set_combo_selection(self, combo, target_text, fallback_index):
+        target_text = target_text or u""
+        match_index = combo.FindStringExact(target_text)
+        if match_index >= 0:
+            combo.SelectedIndex = match_index
         else:
-            dx, dy = get_head_offset_for_pipe(anchor_pipe, "L", tipo)
-            try:
-                tag.TagHeadPosition = offset_in_view(midpoint, dx, dy)
-            except:
-                pass
+            combo.SelectedIndex = fallback_index
 
-        created += 1
-    except:
-        skipped_error += 1
+    def _set_checkbox_pair(self, target_value, first_value, first_checkbox, second_value, second_checkbox):
+        if target_value == second_value:
+            first_checkbox.Checked = False
+            second_checkbox.Checked = True
+        else:
+            first_checkbox.Checked = True
+            second_checkbox.Checked = False
 
-t.Commit()
+    def _add_header(self, text, x, y):
+        label = Label()
+        label.Text = text
+        label.Location = Point(x, y)
+        label.AutoSize = True
+        label.ForeColor = TEXT_COLOR
+        label.Font = Font("Segoe UI", 13, FontStyle.Regular)
+        self.Controls.Add(label)
 
-TaskDialog.Show(
-    "Resultado",
-    u"Familia usada: {} (v{})\nTipo: {}\nSegmentos detectados: {}\nEtiquetas creadas: {}\nOmitidos terminales (conectados a equipo): {}\nOmitidos ya etiquetados: {}\nOmitidos sin midpoint valido: {}\nOmitidos sin A/L en 'Tipo de sistema': {}\nErrores de creacion: {}".format(
-        family_used,
-        version_used,
-        TAG_TYPE_NAME,
-        len(segments),
-        created,
-        skipped_terminal,
-        skipped_tagged,
-        skipped_no_midpoint,
-        skipped_no_system,
-        skipped_error,
-    ),
-)
+    def _add_checkbox(self, text, x, y, checked):
+        checkbox = CheckBox()
+        checkbox.Text = text
+        checkbox.Location = Point(x, y)
+        checkbox.AutoSize = True
+        checkbox.Checked = checked
+        self.Controls.Add(checkbox)
+        return checkbox
+
+    def _add_combo(self, items, x, y, width):
+        combo = ComboBox()
+        combo.Location = Point(x, y)
+        combo.Size = Size(width, 28)
+        combo.DropDownStyle = ComboBoxStyle.DropDownList
+        for item in items:
+            combo.Items.Add(item)
+        self.Controls.Add(combo)
+        return combo
+
+    def _selected_combo_text(self, combo):
+        if combo.SelectedItem is None:
+            return None
+        return as_text(combo.SelectedItem)
+
+    def _selected_cliente(self):
+        if self.cliente_dinosol.Checked:
+            return u"Dinosol"
+        if self.cliente_bon_preu.Checked:
+            return u"Bon Preu"
+        return None
+
+    def _selected_servicio(self):
+        if self.servicio_positivo.Checked:
+            return u"Positivo"
+        if self.servicio_negativo.Checked:
+            return u"Negativo"
+        return None
+
+    def _selected_apertura(self):
+        if self.apertura_derecha.Checked:
+            return u"Derecha"
+        if self.apertura_izquierda.Checked:
+            return u"Izquierda"
+        return None
+
+    def _current_state(self):
+        return {
+            "cliente": self._selected_cliente() or DEFAULT_STATE["cliente"],
+            "servicio": self._selected_servicio() or DEFAULT_STATE["servicio"],
+            "tipo": self._selected_combo_text(self.tipo_combo) or DEFAULT_STATE["tipo"],
+            "ancho": self._selected_combo_text(self.ancho_combo) or DEFAULT_STATE["ancho"],
+            "alto": self._selected_combo_text(self.alto_combo) or DEFAULT_STATE["alto"],
+            "apertura": self._selected_apertura() or DEFAULT_STATE["apertura"],
+        }
+
+    def _current_code(self):
+        return build_type_code(
+            self._selected_cliente(),
+            self._selected_combo_text(self.tipo_combo),
+            self._selected_servicio(),
+            self._selected_combo_text(self.ancho_combo),
+            self._selected_combo_text(self.alto_combo),
+            self._selected_apertura(),
+        )
+
+    def _apply_exclusive_checkbox_logic(self, current_checkbox, other_checkbox):
+        if self._updating_checkbox_group:
+            return
+
+        self._updating_checkbox_group = True
+        try:
+            if current_checkbox.Checked:
+                other_checkbox.Checked = False
+            elif not other_checkbox.Checked:
+                current_checkbox.Checked = True
+        finally:
+            self._updating_checkbox_group = False
+
+        self.update_preview()
+
+    def on_cliente_changed(self, sender, args):
+        if sender == self.cliente_dinosol:
+            self._apply_exclusive_checkbox_logic(self.cliente_dinosol, self.cliente_bon_preu)
+        else:
+            self._apply_exclusive_checkbox_logic(self.cliente_bon_preu, self.cliente_dinosol)
+
+    def on_servicio_changed(self, sender, args):
+        if sender == self.servicio_positivo:
+            self._apply_exclusive_checkbox_logic(self.servicio_positivo, self.servicio_negativo)
+        else:
+            self._apply_exclusive_checkbox_logic(self.servicio_negativo, self.servicio_positivo)
+
+    def on_apertura_changed(self, sender, args):
+        if sender == self.apertura_derecha:
+            self._apply_exclusive_checkbox_logic(self.apertura_derecha, self.apertura_izquierda)
+        else:
+            self._apply_exclusive_checkbox_logic(self.apertura_izquierda, self.apertura_derecha)
+
+    def on_any_value_changed(self, sender, args):
+        self.update_preview()
+
+    def on_form_closing(self, sender, args):
+        save_last_selection(self._current_state())
+
+    def update_preview(self):
+        espesor_code = get_espesor_code(self._selected_cliente(), self._selected_servicio())
+        self.espesor_box.Text = espesor_code
+
+        code = self._current_code()
+        self.preview_box.Text = code
+
+        if not self._is_loading_defaults:
+            save_last_selection(self._current_state())
+
+        if not code:
+            self.status_label.Text = u"Faltan opciones"
+            self.status_label.ForeColor = ERROR_COLOR
+            return
+
+        if code in self.symbols_by_type_name:
+            self.status_label.Text = u"Tipo disponible"
+            self.status_label.ForeColor = OK_COLOR
+        else:
+            self.status_label.Text = u"Tipo no encontrado"
+            self.status_label.ForeColor = ERROR_COLOR
+
+    def on_select_click(self, sender, args):
+        type_code = self._current_code()
+
+        if not type_code:
+            TaskDialog.Show(WINDOW_TITLE, u"Completa todas las opciones antes de continuar.")
+            return
+
+        symbol = self.symbols_by_type_name.get(type_code)
+        if symbol is None:
+            TaskDialog.Show(
+                WINDOW_TITLE,
+                u"No existe el tipo '{}'\nen una familia compatible '{}'.".format(type_code, FAMILY_DISPLAY_NAME),
+            )
+            return
+
+        tx = None
+        try:
+            if not symbol.IsActive:
+                tx = Transaction(doc, u"Activar tipo de puerta")
+                tx.Start()
+                symbol.Activate()
+                doc.Regenerate()
+                tx.Commit()
+                tx = None
+
+            save_last_selection(self._current_state())
+            uidoc.PostRequestForElementTypePlacement(symbol)
+            self.Close()
+        except Exception as ex:
+            if tx is not None:
+                try:
+                    tx.RollBack()
+                except Exception:
+                    pass
+
+            TaskDialog.Show(
+                WINDOW_TITLE,
+                u"No se pudo dejar preparado el tipo '{}'.\n\n{}".format(type_code, as_text(ex)),
+            )
+
+
+def main():
+    if doc is None or uidoc is None:
+        TaskDialog.Show(WINDOW_TITLE, u"No hay un documento de Revit activo.")
+        return
+
+    if doc.IsFamilyDocument:
+        TaskDialog.Show(WINDOW_TITLE, u"Este comando debe ejecutarse en un proyecto, no dentro del editor de familias.")
+        return
+
+    symbols_by_type_name = collect_door_symbols()
+    if not symbols_by_type_name:
+        TaskDialog.Show(
+            WINDOW_TITLE,
+            u"No se encontraron tipos cargados de familias compatibles '{}' en este proyecto.".format(FAMILY_DISPLAY_NAME),
+        )
+        return
+
+    Application.EnableVisualStyles()
+    form = DoorSelectorForm(symbols_by_type_name)
+    form.ShowDialog()
+
+
+if __name__ == "__main__":
+    main()

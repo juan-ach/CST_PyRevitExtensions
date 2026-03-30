@@ -1,0 +1,10 @@
+layout:
+  - 00_Test.panel
+  - 01_Plano_Original.panel
+  - 02_Servicios_Frigorificos.panel
+  - 03_Distribucion_Tuberias.panel
+  - 04_Trazado_Electrico.panel
+  - 05_Esquema_Frigorifico.panel
+  - 06_Seguridades.panel
+  - 07_Check_Out.panel
+  - 10_Common_Tools.panel

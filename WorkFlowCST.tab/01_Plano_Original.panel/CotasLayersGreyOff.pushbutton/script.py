@@ -76,7 +76,7 @@ viewTemplateNames = [
 "CST_FLO_TUB"
 ]
 
-searchStrings = ["tex", "txt", "cota", "implan", "seccions", "cotes"]
+searchStrings = ["tex", "txt", "cota", "implan", "seccions", "cotes", "text"]
 
 # -------------------------------------------------------------------
 # SCRIPT
